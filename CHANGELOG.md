@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.0.15] - 24-05-2026
+
+### Novidades
+
+- **Reembolsos**:
+  - Configuração por produto (**área de membros**) na **edição do produto** (aba **Reembolso**): habilitar solicitação, prazo em dias e modo **automático** ou **aprovação manual**.
+  - **Área de membros**: o aluno pode solicitar reembolso pelo menu da conta (com validação de elegibilidade e prazo).
+  - **Painel Reembolsos**: listagem, aprovação e rejeição de solicitações, com permissões de equipe (`reembolsos.view` / `reembolsos.manage`).
+  - **Vendas**: ação **Reembolsar** no pedido, com confirmação e notas internas.
+  - **CajuPay (PIX)**: estorno automático via API (`pix-refund`) quando o pagamento for PIX; confirmação pelo webhook `pix.payment.refunded`.
+  - Ao concluir o reembolso, o **acesso do aluno ao produto é revogado** automaticamente.
+- **Moedas / vendas globais**:
+  - Campo **`currency`** gravado em cada pedido (moeda efetivamente cobrada no checkout; pedidos antigos ficam com **BRL** por defeito).
+  - **Vendas**, **Dashboard** e **Relatórios** passam a exibir cada venda e os resumos **na moeda original do pedido** (USD, EUR, BRL, etc.) — sem converter tudo para real na interface.
+  - Totais do período agrupados **por moeda** (`valor_por_moeda`), para acompanhar receita internacional com valores corretos em cada divisa.
+  - Formatação monetária por moeda (`Intl`) na listagem, cards de estatísticas e exportações relacionadas.
+
+### Melhorias
+
+- **Meta Pixel / Meta Ads (Conversions API)**:
+  - Envio de **Purchase** pela **API de conversões (CAPI)** em fila (`SendMetaPurchaseCapiJob`), com **retentativas** e **deduplicação** por `event_id` alinhado ao pixel do browser.
+  - **Moeda e valor** do evento respeitam a moeda real do pedido e o total dos itens (incluindo opção de **excluir order bumps** do evento por pixel).
+  - Suporte a **vários pixels Meta** por produto, cada um com token CAPI próprio.
+  - **InitiateCheckout** e **Purchase** no checkout com `event_id` consistente para melhor atribuição na Meta.
+- **CajuPay**: persistência de `payment_id` nos metadados do pedido via webhook, facilitando reembolsos e rastreio.
+- **Checkout internacional**: preços personalizados por moeda estrangeira no produto; na cobrança o valor é convertido para BRL no gateway quando necessário, mas o painel mantém o registo e a visualização na **moeda em que o cliente pagou**.
+
+### Correções
+
+- **Reembolsos (Vendas)**: corrigido erro ao reembolsar pedidos **sem `user_id`** (comprador resolvido pelo e-mail), falha quando o **`payment_id` CajuPay** não estava disponível e bloqueio após tentativa anterior falhada (nova tentativa permitida).
+- **Meta Pixel**: correções no fluxo de **Purchase** após pagamento (browser + CAPI) para reduzir eventos duplicados ou perdidos.
+
 ## [1.0.14] - 10-05-2026
 
 ### Novidades
