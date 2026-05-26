@@ -421,6 +421,8 @@ Route::middleware(['auth', 'admin.tenant', 'role:admin|infoprodutor|team', 'audi
     Route::middleware('team.permission:configuracoes.view')->group(function () {
         Route::get('/configuracoes', [\App\Http\Controllers\SettingsController::class, 'index'])->name('settings.index');
         Route::put('/configuracoes', [\App\Http\Controllers\SettingsController::class, 'update'])->name('settings.update');
+        Route::post('/configuracoes/currencies/import-catalog', [\App\Http\Controllers\SettingsController::class, 'importCurrencyCatalog'])->name('settings.currencies.import');
+        Route::post('/configuracoes/currencies/sync-rates', [\App\Http\Controllers\SettingsController::class, 'syncCurrencyRates'])->name('settings.currencies.sync');
         Route::post('/configuracoes/email/test', [\App\Http\Controllers\EmailTestController::class, 'test'])->name('settings.email.test');
         Route::post('/configuracoes/email/connection-test', [\App\Http\Controllers\EmailTestController::class, 'connectionTest'])->name('settings.email.connection-test');
         Route::post('/configuracoes/email/send-test', [\App\Http\Controllers\EmailTestController::class, 'sendTest'])->name('settings.email.send-test');

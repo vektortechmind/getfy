@@ -20,6 +20,7 @@ use App\Models\User;
 use App\Plugins\PluginRegistry;
 use App\Services\StorageService;
 use App\Services\TeamAccessService;
+use App\Support\CheckoutCurrencyCatalog;
 use App\Support\CheckoutCustomPriceByCurrency;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -47,13 +48,13 @@ class ProdutosController extends Controller
     public function index(Request $request): Response
     {
         $tenantId = auth()->user()->tenant_id;
-        $rates = config('products.rates', ['brl_eur' => 0.16, 'brl_usd' => 0.18]);
+        $tenantCurrencies = $this->tenantCurrenciesFor($tenantId);
         $query = Product::forTenant($tenantId)->orderBy('name');
         if (auth()->user()->isTeam()) {
             $allowed = app(TeamAccessService::class)->allowedProductIdsFor(auth()->user());
             $query->whereIn('id', $allowed ?: ['__none__']);
         }
-        $products = $query->paginate(20)->withQueryString()->through(fn (Product $p) => $this->productToArray($p, $rates));
+        $products = $query->paginate(20)->withQueryString()->through(fn (Product $p) => $this->productToArray($p, $tenantCurrencies));
 
         $productTypes = collect(Product::typeConfig())->map(fn ($config, $value) => [
             'value' => $value,
@@ -68,7 +69,8 @@ class ProdutosController extends Controller
             'produtos' => $products,
             'productTypes' => $productTypes,
             'billingTypes' => $billingTypes,
-            'exchange_rates' => $rates,
+            'exchange_rates' => $this->legacyExchangeRatesMap($tenantCurrencies),
+            'tenant_currencies' => $tenantCurrencies,
             'plugin_card_actions' => [],
             'plugin_form_sections' => [],
         ]);
@@ -160,7 +162,7 @@ class ProdutosController extends Controller
             return collect($ids)->map(fn ($id) => $comboNameById[$id] ?? null)->filter()->values()->all();
         };
 
-        $rates = config('products.rates', ['brl_eur' => 0.16, 'brl_usd' => 0.18]);
+        $tenantCurrencies = $this->tenantCurrenciesFor($produto->tenant_id);
         $productTypes = collect(Product::typeConfig())->map(fn ($config, $value) => [
             'value' => $value,
             'label' => $config['label'],
@@ -170,7 +172,7 @@ class ProdutosController extends Controller
 
         $billingTypes = collect(Product::billingTypeLabels())->map(fn ($label, $value) => ['value' => $value, 'label' => $label])->values()->all();
 
-        $produtoArray = $this->productToArray($produto, $rates);
+        $produtoArray = $this->productToArray($produto, $tenantCurrencies);
         $produtoArray['combo_product_names'] = $resolveComboNames($produto->combo_product_ids ?? []);
         $produtoArray['users'] = $produto->users->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'email' => $u->email])->all();
         $produtoArray['offers'] = $produto->offers->map(fn ($o) => [
@@ -227,7 +229,7 @@ class ProdutosController extends Controller
             ->orderBy('name')
             ->with('offers')
             ->get();
-        $produtoArray['available_products_for_bump'] = $availableForBump->map(function (Product $p) use ($rates) {
+        $produtoArray['available_products_for_bump'] = $availableForBump->map(function (Product $p) use ($tenantCurrencies) {
             $imageUrl = $p->image ? app(StorageService::class)->url($p->image) : null;
             return [
                 'id' => $p->id,
@@ -277,13 +279,7 @@ class ProdutosController extends Controller
         );
         $produtoArray['checkout_config'] = $checkoutConfig;
 
-        $currenciesRaw = Setting::get('currencies', null, $tenantId);
-        $tenantCurrencies = $currenciesRaw
-            ? (is_string($currenciesRaw) ? json_decode($currenciesRaw, true) : $currenciesRaw)
-            : config('products.currencies');
-        if (! is_array($tenantCurrencies)) {
-            $tenantCurrencies = config('products.currencies');
-        }
+        $tenantCurrencies = $this->tenantCurrenciesFor($tenantId);
 
         $external = DB::table('cademi_integration_product')
             ->where('product_id', $produto->id)
@@ -336,7 +332,7 @@ class ProdutosController extends Controller
             'produto' => $produtoArray,
             'productTypes' => $productTypes,
             'billingTypes' => $billingTypes,
-            'exchange_rates' => $rates,
+            'exchange_rates' => $this->legacyExchangeRatesMap($tenantCurrencies),
             'tenant_currencies' => $tenantCurrencies,
             'gateways_by_method' => $gatewaysByMethod,
             'cademi_integrations' => $cademiIntegrations,
@@ -1110,15 +1106,15 @@ class ProdutosController extends Controller
         }
     }
 
-    private function productToArray(Product $p, array $rates): array
+    private function productToArray(Product $p, array $tenantCurrencies): array
     {
         $priceBrl = (float) $p->price;
         $currency = $p->currency ?? 'BRL';
         if ($currency !== 'BRL') {
-            $priceBrl = $currency === 'EUR' ? $priceBrl / ($rates['brl_eur'] ?? 0.16) : $priceBrl / ($rates['brl_usd'] ?? 0.18);
+            $priceBrl = CheckoutCurrencyCatalog::brlFromForeignAmount($priceBrl, $currency, $tenantCurrencies);
         }
-        $priceEur = round($priceBrl * ($rates['brl_eur'] ?? 0.16), 2);
-        $priceUsd = round($priceBrl * ($rates['brl_usd'] ?? 0.18), 2);
+        $priceEur = CheckoutCurrencyCatalog::foreignFromBrlAmount($priceBrl, 'EUR', $tenantCurrencies);
+        $priceUsd = CheckoutCurrencyCatalog::foreignFromBrlAmount($priceBrl, 'USD', $tenantCurrencies);
 
         $imageUrl = $p->image
             ? app(StorageService::class)->url($p->image)
@@ -1290,5 +1286,32 @@ class ProdutosController extends Controller
             }
         }
         return $byMethod;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function tenantCurrenciesFor(?int $tenantId): array
+    {
+        $raw = Setting::get('currencies', null, $tenantId);
+        $list = $raw
+            ? (is_string($raw) ? json_decode($raw, true) : $raw)
+            : config('products.currencies');
+
+        return CheckoutCurrencyCatalog::mergeTenantCurrencies(is_array($list) ? $list : []);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $tenantCurrencies
+     * @return array{brl_eur: float, brl_usd: float}
+     */
+    private function legacyExchangeRatesMap(array $tenantCurrencies): array
+    {
+        $rates = config('products.rates', ['brl_eur' => 0.16, 'brl_usd' => 0.18]);
+
+        return [
+            'brl_eur' => CheckoutCustomPriceByCurrency::rateToBrlForCode($tenantCurrencies, 'EUR') ?: (float) ($rates['brl_eur'] ?? 0.16),
+            'brl_usd' => CheckoutCustomPriceByCurrency::rateToBrlForCode($tenantCurrencies, 'USD') ?: (float) ($rates['brl_usd'] ?? 0.18),
+        ];
     }
 }

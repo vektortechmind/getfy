@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Models\Setting;
+use App\Support\CheckoutCurrencyCatalog;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -75,10 +77,16 @@ class ProductOrderBump extends Model
         if ($currency === 'BRL') {
             return $amount;
         }
-        $rates = config('products.rates', ['brl_eur' => 0.16, 'brl_usd' => 0.18]);
-        if ($currency === 'EUR') {
-            return $amount / ($rates['brl_eur'] ?? 0.16);
-        }
-        return $amount / ($rates['brl_usd'] ?? 0.18);
+        $tenantId = $this->product?->tenant_id;
+        $raw = Setting::get('currencies', null, $tenantId);
+        $list = $raw
+            ? (is_string($raw) ? json_decode($raw, true) : $raw)
+            : config('products.currencies');
+
+        return CheckoutCurrencyCatalog::brlFromForeignAmount(
+            $amount,
+            $currency,
+            is_array($list) ? $list : []
+        );
     }
 }

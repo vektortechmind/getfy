@@ -4,6 +4,7 @@ namespace App\Support;
 
 use App\Models\Product;
 use App\Models\ProductOffer;
+use App\Models\Setting;
 use App\Models\SubscriptionPlan;
 
 /**
@@ -11,6 +12,19 @@ use App\Models\SubscriptionPlan;
  */
 class ApiHostedCheckoutPricing
 {
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private static function tenantCurrencies(int $tenantId): array
+    {
+        $raw = Setting::get('currencies', null, $tenantId);
+        $list = $raw
+            ? (is_string($raw) ? json_decode($raw, true) : $raw)
+            : config('products.currencies');
+
+        return CheckoutCurrencyCatalog::mergeTenantCurrencies(is_array($list) ? $list : []);
+    }
+
     public static function expectedAmountBrl(
         int $tenantId,
         string $productId,
@@ -41,24 +55,28 @@ class ApiHostedCheckoutPricing
             $currency = $plan->getCurrencyOrDefault();
         }
 
-        $rates = config('products.rates', ['brl_eur' => 0.16, 'brl_usd' => 0.18]);
         if ($currency !== 'BRL') {
-            $orderAmount = $currency === 'EUR' ? $orderAmount / ($rates['brl_eur'] ?? 0.16) : $orderAmount / ($rates['brl_usd'] ?? 0.18);
+            $orderAmount = CheckoutCurrencyCatalog::brlFromForeignAmount(
+                $orderAmount,
+                $currency,
+                self::tenantCurrencies($tenantId)
+            );
         }
 
         return $orderAmount;
     }
 
-    public static function amountToBrl(float $amount, string $currency): float
+    public static function amountToBrl(float $amount, string $currency, ?int $tenantId = null): float
     {
         $currency = strtoupper($currency);
         if ($currency === 'BRL') {
             return $amount;
         }
-        $rates = config('products.rates', ['brl_eur' => 0.16, 'brl_usd' => 0.18]);
 
-        return $currency === 'EUR'
-            ? $amount / ($rates['brl_eur'] ?? 0.16)
-            : $amount / ($rates['brl_usd'] ?? 0.18);
+        $list = $tenantId !== null ? self::tenantCurrencies($tenantId) : CheckoutCurrencyCatalog::mergeTenantCurrencies(
+            (array) config('products.currencies')
+        );
+
+        return CheckoutCurrencyCatalog::brlFromForeignAmount($amount, $currency, $list);
     }
 }

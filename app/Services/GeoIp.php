@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\CheckoutCurrencyCatalog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -143,12 +144,6 @@ class GeoIp
 
     private function currencyForCountry(string $countryCode): string
     {
-        if ($countryCode === 'BR') {
-            return self::CURRENCY_BRL;
-        }
-        if (in_array($countryCode, self::EUR_COUNTRIES, true)) {
-            return self::CURRENCY_EUR;
-        }
-        return self::CURRENCY_USD;
+        return CheckoutCurrencyCatalog::currencyForCountry($countryCode);
     }
 }

@@ -13,8 +13,10 @@ use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\ProductOffer;
 use App\Models\SubscriptionPlan;
+use App\Models\Setting;
 use App\Models\User;
 use App\Services\CheckoutAbuseGuard;
+use App\Support\CheckoutCurrencyCatalog;
 use App\Services\PaymentService;
 use App\Support\FakeConsumerData;
 use Illuminate\Http\JsonResponse;
@@ -138,9 +140,12 @@ class PaymentsController extends Controller
             }
         }
 
-        $rates = config('products.rates', ['brl_eur' => 0.16, 'brl_usd' => 0.18]);
         if ($currency !== 'BRL') {
-            $orderAmount = $currency === 'EUR' ? $orderAmount / ($rates['brl_eur'] ?? 0.16) : $orderAmount / ($rates['brl_usd'] ?? 0.18);
+            $orderAmount = CheckoutCurrencyCatalog::brlFromForeignAmount(
+                $orderAmount,
+                $currency,
+                $this->tenantCurrenciesList($product->tenant_id)
+            );
         }
 
         $consumer = $userConsumer['consumer'];
@@ -446,5 +451,18 @@ class PaymentsController extends Controller
                 'message' => $e->getMessage() ?: 'Não foi possível gerar o boleto.',
             ], 422);
         }
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function tenantCurrenciesList(?int $tenantId): array
+    {
+        $raw = Setting::get('currencies', null, $tenantId);
+        $list = $raw
+            ? (is_string($raw) ? json_decode($raw, true) : $raw)
+            : config('products.currencies');
+
+        return CheckoutCurrencyCatalog::mergeTenantCurrencies(is_array($list) ? $list : []);
     }
 }

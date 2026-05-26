@@ -13,7 +13,9 @@ use App\Models\Order;
 use App\Models\Setting;
 use App\Models\Subscription;
 use App\Services\EfiPixRecorrenteService;
+use App\Models\Setting;
 use App\Services\GeoIp;
+use App\Support\CheckoutCurrencyCatalog;
 use App\Services\PaymentService;
 use App\Support\CheckoutPaymentMethodOrder;
 use App\Support\FakeConsumerData;
@@ -40,12 +42,15 @@ class RenewalController extends Controller
         $plan = $subscription->subscriptionPlan;
         $amount = (float) $plan->price;
         $currency = $plan->getCurrencyOrDefault();
-        $rates = config('products.rates', ['brl_eur' => 0.16, 'brl_usd' => 0.18]);
+        $tenantId = $subscription->tenant_id;
         if ($currency !== 'BRL') {
-            $amount = $currency === 'EUR' ? $amount / ($rates['brl_eur'] ?? 0.16) : $amount / ($rates['brl_usd'] ?? 0.18);
+            $amount = CheckoutCurrencyCatalog::brlFromForeignAmount(
+                $amount,
+                $currency,
+                $this->tenantCurrencies($tenantId)
+            );
         }
 
-        $tenantId = $subscription->tenant_id;
         $suggestions = (new GeoIp)->getSuggestionsForRequest($request);
         $availablePaymentMethods = CheckoutPaymentMethodOrder::applyForCountry(
             $this->buildAvailablePaymentMethods($product, $subscription),
@@ -108,9 +113,12 @@ class RenewalController extends Controller
         $tenantId = $subscription->tenant_id;
         $amount = (float) $plan->price;
         $currency = $plan->getCurrencyOrDefault();
-        $rates = config('products.rates', ['brl_eur' => 0.16, 'brl_usd' => 0.18]);
         if ($currency !== 'BRL') {
-            $amount = $currency === 'EUR' ? $amount / ($rates['brl_eur'] ?? 0.16) : $amount / ($rates['brl_usd'] ?? 0.18);
+            $amount = CheckoutCurrencyCatalog::brlFromForeignAmount(
+                $amount,
+                $currency,
+                $this->tenantCurrencies($tenantId)
+            );
         }
 
         [$periodStart, $periodEnd] = $plan->getCurrentPeriod();
@@ -323,5 +331,18 @@ class RenewalController extends Controller
         }
 
         return $methods;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function tenantCurrencies(?int $tenantId): array
+    {
+        $raw = Setting::get('currencies', null, $tenantId);
+        $list = $raw
+            ? (is_string($raw) ? json_decode($raw, true) : $raw)
+            : config('products.currencies');
+
+        return CheckoutCurrencyCatalog::mergeTenantCurrencies(is_array($list) ? $list : []);
     }
 }

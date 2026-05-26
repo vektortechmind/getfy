@@ -26,6 +26,10 @@ const props = defineProps({
         type: Object,
         required: true,
     },
+    currency_catalog_presets: {
+        type: Object,
+        default: () => ({}),
+    },
     current_version: {
         type: String,
         default: '1.0.0',
@@ -296,22 +300,16 @@ function ensureTranslationKey(key) {
 }
 
 const CURRENCY_PRESETS = {
-    BRL: { symbol: 'R$', label: 'Real brasileiro' },
-    USD: { symbol: 'US$', label: 'Dólar americano' },
-    EUR: { symbol: '€', label: 'Euro' },
-    GBP: { symbol: '£', label: 'Libra esterlina' },
-    ARS: { symbol: '$', label: 'Peso argentino' },
-    CAD: { symbol: 'C$', label: 'Dólar canadense' },
-    CLP: { symbol: '$', label: 'Peso chileno' },
-    COP: { symbol: '$', label: 'Peso colombiano' },
-    MXN: { symbol: '$', label: 'Peso mexicano' },
-    PYG: { symbol: '₲', label: 'Guarani paraguaio' },
-    UYU: { symbol: '$', label: 'Peso uruguaio' },
+    ...(props.currency_catalog_presets || {}),
 };
 
 const rateModeByIndex = ref({});
 const refreshLoadingByIndex = ref({});
 const rateFetchError = ref(null);
+const importCatalogLoading = ref(false);
+const syncAllRatesLoading = ref(false);
+const catalogActionMessage = ref(null);
+const catalogActionError = ref(null);
 
 function getRateMode(index) {
     return rateModeByIndex.value[index] ?? 'brl_to';
@@ -379,6 +377,40 @@ function removeCurrency(index) {
     const next = { ...rateModeByIndex.value };
     delete next[index];
     rateModeByIndex.value = next;
+}
+
+async function importInternationalCurrencies() {
+    importCatalogLoading.value = true;
+    catalogActionMessage.value = null;
+    catalogActionError.value = null;
+    try {
+        const { data } = await window.axios.post('/configuracoes/currencies/import-catalog');
+        if (data?.currencies?.length) {
+            form.currencies = data.currencies;
+            catalogActionMessage.value = `${data.count} moedas importadas com taxas atualizadas.`;
+        }
+    } catch (e) {
+        catalogActionError.value = e?.response?.data?.message || 'Não foi possível importar o catálogo.';
+    } finally {
+        importCatalogLoading.value = false;
+    }
+}
+
+async function syncAllCurrencyRates() {
+    syncAllRatesLoading.value = true;
+    catalogActionMessage.value = null;
+    catalogActionError.value = null;
+    try {
+        const { data } = await window.axios.post('/configuracoes/currencies/sync-rates');
+        if (data?.currencies?.length) {
+            form.currencies = data.currencies;
+            catalogActionMessage.value = `Taxas atualizadas para ${data.count} moedas.`;
+        }
+    } catch (e) {
+        catalogActionError.value = e?.response?.data?.message || 'Não foi possível atualizar as taxas.';
+    } finally {
+        syncAllRatesLoading.value = false;
+    }
 }
 
 async function testConnection() {
@@ -996,8 +1028,30 @@ const selectClass =
                         <div class="border-b border-zinc-200 bg-zinc-50 px-6 py-5 dark:border-zinc-700 dark:bg-zinc-800">
                             <h2 class="text-base font-semibold text-zinc-900 dark:text-white">Moedas disponíveis no checkout</h2>
                             <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                                Configure as moedas e suas taxas de conversão. Use o botão "Buscar taxa" para atualizar automaticamente.
+                                Configure as moedas e suas taxas de conversão. Importe o catálogo internacional ou atualize todas as taxas via Frankfurter.
                             </p>
+                            <div class="mt-4 flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    :disabled="importCatalogLoading || syncAllRatesLoading"
+                                    class="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
+                                    @click="importInternationalCurrencies"
+                                >
+                                    <Download class="h-4 w-4" :class="{ 'animate-pulse': importCatalogLoading }" />
+                                    Importar moedas internacionais
+                                </button>
+                                <button
+                                    type="button"
+                                    :disabled="importCatalogLoading || syncAllRatesLoading || !form.currencies.length"
+                                    class="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
+                                    @click="syncAllCurrencyRates"
+                                >
+                                    <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': syncAllRatesLoading }" />
+                                    Atualizar todas as taxas
+                                </button>
+                            </div>
+                            <p v-if="catalogActionMessage" class="mt-3 text-sm text-emerald-700 dark:text-emerald-400">{{ catalogActionMessage }}</p>
+                            <p v-if="catalogActionError" class="mt-3 text-sm text-red-600 dark:text-red-400">{{ catalogActionError }}</p>
                         </div>
                         <div v-if="rateFetchError" class="mx-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-200">
                             {{ rateFetchError }}

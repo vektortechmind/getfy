@@ -4,9 +4,9 @@ namespace App\Support;
 
 class MoneyMinorUnits
 {
-    /** ISO 4217 currencies without fractional units (amount_cents = major units). */
+    /** ISO 4217 currencies without fractional units (amount_cents = major units). Alinhado a Stripe + config. */
     private const ZERO_DECIMAL = [
-        'BIF', 'CLP', 'DJF', 'GNF', 'ISK', 'JPY', 'KMF', 'KRW', 'PYG', 'RWF',
+        'BIF', 'CLP', 'DJF', 'GNF', 'ISK', 'JPY', 'KMF', 'KRW', 'MGA', 'PYG', 'RWF',
         'UGX', 'UYI', 'VND', 'VUV', 'XAF', 'XOF', 'XPF',
     ];
 
@@ -19,7 +19,11 @@ class MoneyMinorUnits
 
     public static function isZeroDecimal(string $currency): bool
     {
-        return in_array(self::normalizeCurrencyCode($currency), self::ZERO_DECIMAL, true);
+        $code = self::normalizeCurrencyCode($currency);
+        $fromConfig = config('checkout_currencies.zero_decimal', []);
+
+        return in_array($code, self::ZERO_DECIMAL, true)
+            || (is_array($fromConfig) && in_array($code, $fromConfig, true));
     }
 
     public static function toMinorUnits(float $amount, string $currency): int

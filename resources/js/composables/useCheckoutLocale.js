@@ -3,6 +3,7 @@ import { ref, computed, watch, toValue } from 'vue';
 const LOCALE_KEY = 'checkout_locale';
 const CURRENCY_KEY = 'checkout_currency';
 const SUPPORTED_LOCALES = ['pt_BR', 'en', 'es'];
+const FEATURED_CURRENCY_CODES = ['BRL', 'USD', 'EUR'];
 
 /**
  * @param {Object} options
@@ -117,6 +118,21 @@ export function useCheckoutLocale(options = {}) {
 
     const currencyList = computed(() => (Array.isArray(currencies) ? currencies : []));
 
+    const featuredCurrencies = computed(() => {
+        const list = currencyList.value;
+        return FEATURED_CURRENCY_CODES.map((code) => list.find((c) => c.code === code)).filter(Boolean);
+    });
+
+    const otherCurrencies = computed(() => {
+        const featuredSet = new Set(FEATURED_CURRENCY_CODES);
+        return currencyList.value
+            .filter((c) => c?.code && !featuredSet.has(c.code))
+            .slice()
+            .sort((a, b) => String(a.code).localeCompare(String(b.code)));
+    });
+
+    const sortedCurrenciesForSelector = computed(() => [...featuredCurrencies.value, ...otherCurrencies.value]);
+
     const currentCurrencyObj = computed(
         () => currencyList.value.find((c) => c.code === currency.value) || currencyList.value[0] || { code: 'BRL', symbol: 'R$', label: 'Real', rate_to_brl: 1 }
     );
@@ -141,13 +157,27 @@ export function useCheckoutLocale(options = {}) {
         return Math.round(n * rate * 100) / 100;
     }
 
+    function localeForCurrency(code) {
+        const c = code || currency.value || 'BRL';
+        try {
+            return new Intl.NumberFormat(undefined, { style: 'currency', currency: c }).resolvedOptions().locale;
+        } catch {
+            return c === 'BRL' ? 'pt-BR' : 'en-US';
+        }
+    }
+
     function formatPrice(value, currencyCode) {
         const code = currencyCode || currency.value || 'BRL';
-        const localeForFormat = code === 'BRL' ? 'pt-BR' : code === 'EUR' ? 'de-DE' : 'en-US';
-        return new Intl.NumberFormat(localeForFormat, {
-            style: 'currency',
-            currency: code,
-        }).format(value);
+        const n = Number(value);
+        if (Number.isNaN(n)) return String(value);
+        try {
+            return new Intl.NumberFormat(localeForCurrency(code), {
+                style: 'currency',
+                currency: code,
+            }).format(n);
+        } catch {
+            return `${code} ${n.toFixed(2)}`;
+        }
     }
 
     return {
@@ -157,6 +187,9 @@ export function useCheckoutLocale(options = {}) {
         setCurrency,
         t,
         currencies: currencyList,
+        featuredCurrencies,
+        otherCurrencies,
+        sortedCurrenciesForSelector,
         currentCurrencyObj,
         priceInCurrency,
         formatPrice,

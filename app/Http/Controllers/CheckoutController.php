@@ -28,6 +28,7 @@ use App\Services\CheckoutAbuseGuard;
 use App\Services\PaymentService;
 use App\Services\PushinPayPixRecorrenteService;
 use App\Support\CheckoutCardContract;
+use App\Support\CheckoutCurrencyCatalog;
 use App\Support\CheckoutCustomPriceByCurrency;
 use App\Support\CheckoutPaymentMethodOrder;
 use App\Support\CheckoutTranslations;
@@ -242,7 +243,9 @@ class CheckoutController extends Controller
         $currencies = $currenciesRaw
             ? (is_string($currenciesRaw) ? json_decode($currenciesRaw, true) : $currenciesRaw)
             : config('products.currencies');
-        $payload['currencies'] = is_array($currencies) ? $currencies : config('products.currencies');
+        $payload['currencies'] = CheckoutCurrencyCatalog::mergeTenantCurrencies(
+            is_array($currencies) ? $currencies : (array) config('products.currencies')
+        );
 
         $payload['product'] = $this->addPricesInCurrencies($productArray, $payload['currencies']);
         $paymentOrderCountry = $payload['suggested_country_code'] ?? null;
@@ -454,8 +457,11 @@ class CheckoutController extends Controller
             }
         }
         if ($currency !== 'BRL') {
-            $rates = config('products.rates');
-            $price = $currency === 'EUR' ? $price / ($rates['brl_eur'] ?? 0.16) : $price / ($rates['brl_usd'] ?? 0.18);
+            $price = CheckoutCurrencyCatalog::brlFromForeignAmount(
+                $price,
+                $currency,
+                $this->tenantCurrenciesListFor($product->tenant_id)
+            );
         }
         $result = $coupon->applyTo($product, $price);
         if ($result === null) {
@@ -621,8 +627,11 @@ class CheckoutController extends Controller
             $currency = $plan->getCurrencyOrDefault();
         }
         if ($currency !== 'BRL') {
-            $rates = config('products.rates');
-            $amount = $currency === 'EUR' ? $amount / ($rates['brl_eur'] ?? 0.16) : $amount / ($rates['brl_usd'] ?? 0.18);
+            $amount = CheckoutCurrencyCatalog::brlFromForeignAmount(
+                $amount,
+                $currency,
+                $this->tenantCurrenciesListFor($product->tenant_id)
+            );
         }
 
         $displayCurrency = is_string($validated['display_currency'] ?? null) && $validated['display_currency'] !== ''
@@ -1765,8 +1774,11 @@ class CheckoutController extends Controller
             $currency = $plan->getCurrencyOrDefault();
         }
         if ($currency !== 'BRL') {
-            $rates = config('products.rates');
-            $amount = $currency === 'EUR' ? $amount / ($rates['brl_eur'] ?? 0.16) : $amount / ($rates['brl_usd'] ?? 0.18);
+            $amount = CheckoutCurrencyCatalog::brlFromForeignAmount(
+                $amount,
+                $currency,
+                $this->tenantCurrenciesListFor($product->tenant_id)
+            );
         }
 
         $effectiveCurrency = strtoupper((string) ($product->currency ?? 'BRL'));
@@ -2039,8 +2051,11 @@ class CheckoutController extends Controller
             $currency = $plan->getCurrencyOrDefault();
         }
         if ($currency !== 'BRL') {
-            $rates = config('products.rates');
-            $amount = $currency === 'EUR' ? $amount / ($rates['brl_eur'] ?? 0.16) : $amount / ($rates['brl_usd'] ?? 0.18);
+            $amount = CheckoutCurrencyCatalog::brlFromForeignAmount(
+                $amount,
+                $currency,
+                $this->tenantCurrenciesListFor($product->tenant_id)
+            );
         }
 
         $effectiveCurrency = strtoupper((string) ($product->currency ?? 'BRL'));
@@ -2588,14 +2603,10 @@ class CheckoutController extends Controller
     {
         $price = (float) ($productArray['price'] ?? 0);
         $currency = $productArray['currency'] ?? 'BRL';
-        $rates = [];
-        foreach ($currencies as $c) {
-            $code = $c['code'] ?? '';
-            $rates[$code] = (float) ($c['rate_to_brl'] ?? 0);
-        }
-        $brlEur = $rates['EUR'] ?? config('products.rates.brl_eur', 0.16);
-        $brlUsd = $rates['USD'] ?? config('products.rates.brl_usd', 0.18);
-        $priceBrl = $currency === 'BRL' ? $price : ($currency === 'EUR' ? $price / $brlEur : $price / $brlUsd);
+        $tenantList = is_array($currencies) ? $currencies : [];
+        $priceBrl = $currency === 'BRL'
+            ? $price
+            : CheckoutCurrencyCatalog::brlFromForeignAmount($price, $currency, $tenantList);
         $productArray['price_brl'] = round($priceBrl, 2);
         return $productArray;
     }
@@ -2677,7 +2688,9 @@ class CheckoutController extends Controller
             ? (is_string($currenciesRaw) ? json_decode($currenciesRaw, true) : $currenciesRaw)
             : config('products.currencies');
 
-        return is_array($currencies) ? $currencies : (array) config('products.currencies');
+        $list = is_array($currencies) ? $currencies : (array) config('products.currencies');
+
+        return CheckoutCurrencyCatalog::mergeTenantCurrencies($list);
     }
 
     /**

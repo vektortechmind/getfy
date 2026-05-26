@@ -29,6 +29,8 @@ const props = defineProps({
     locale: { type: String, default: 'pt_BR' },
     supportedLocales: { type: Array, default: () => ['pt_BR', 'en', 'es'] },
     currencyList: { type: Array, default: () => [] },
+    featuredCurrencies: { type: Array, default: () => [] },
+    otherCurrencies: { type: Array, default: () => [] },
     localeLabels: { type: Object, default: () => ({ pt_BR: 'PT', en: 'EN', es: 'ES' }) },
 });
 
@@ -77,6 +79,30 @@ const displayDesc = computed(() => (expanded.value ? fullDesc.value : shortDesc.
 
 const localeOpen = ref(false);
 const currencyOpen = ref(false);
+const currencySearch = ref('');
+
+const featuredList = computed(() =>
+    props.featuredCurrencies?.length ? props.featuredCurrencies : props.currencyList.filter((c) => ['BRL', 'USD', 'EUR'].includes(c.code))
+);
+
+const otherList = computed(() => {
+    if (props.otherCurrencies?.length) return props.otherCurrencies;
+    const featuredCodes = new Set(featuredList.value.map((c) => c.code));
+    return props.currencyList.filter((c) => !featuredCodes.has(c.code));
+});
+
+const filteredOtherCurrencies = computed(() => {
+    const q = currencySearch.value.trim().toLowerCase();
+    if (!q) return otherList.value;
+    return otherList.value.filter((c) => {
+        const code = String(c.code || '').toLowerCase();
+        const label = String(c.label || '').toLowerCase();
+        const symbol = String(c.symbol || '').toLowerCase();
+        return code.includes(q) || label.includes(q) || symbol.includes(q);
+    });
+});
+
+const hasOtherCurrencies = computed(() => otherList.value.length > 0);
 
 function selectLocale(loc) {
     emit('set-locale', loc);
@@ -85,6 +111,7 @@ function selectLocale(loc) {
 function selectCurrency(code) {
     emit('set-currency', code);
     currencyOpen.value = false;
+    currencySearch.value = '';
 }
 </script>
 
@@ -135,18 +162,46 @@ function selectCurrency(code) {
                         aria-label="Moeda"
                         align="right"
                     >
-                        <button
-                            v-for="c in currencyList"
-                            :key="c.code"
-                            type="button"
-                            role="option"
-                            class="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-gray-50"
-                            :class="displayCurrency === c.code ? 'bg-gray-50 font-medium text-gray-900' : 'text-gray-700'"
-                            @click="selectCurrency(c.code)"
-                        >
-                            <span>{{ c.code }} · {{ c.symbol }}</span>
-                            <Check v-if="displayCurrency === c.code" class="h-4 w-4 shrink-0 text-gray-500" />
-                        </button>
+                        <div class="max-h-[min(70vh,22rem)] overflow-y-auto">
+                            <div v-if="featuredList.length" class="border-b border-gray-100 px-2 py-2">
+                                <p class="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Principais</p>
+                                <button
+                                    v-for="c in featuredList"
+                                    :key="'f-' + c.code"
+                                    type="button"
+                                    role="option"
+                                    class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-gray-50"
+                                    :class="displayCurrency === c.code ? 'bg-gray-50 font-medium text-gray-900' : 'text-gray-700'"
+                                    @click="selectCurrency(c.code)"
+                                >
+                                    <span>{{ c.code }} · {{ c.symbol }}<span v-if="c.label" class="text-gray-400"> — {{ c.label }}</span></span>
+                                    <Check v-if="displayCurrency === c.code" class="h-4 w-4 shrink-0 text-gray-500" />
+                                </button>
+                            </div>
+                            <div v-if="hasOtherCurrencies" class="px-2 py-2">
+                                <p class="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Outras moedas</p>
+                                <input
+                                    v-model="currencySearch"
+                                    type="search"
+                                    placeholder="Buscar moeda…"
+                                    class="mb-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:border-gray-300 focus:outline-none focus:ring-1 focus:ring-gray-300"
+                                    @click.stop
+                                />
+                                <button
+                                    v-for="c in filteredOtherCurrencies"
+                                    :key="c.code"
+                                    type="button"
+                                    role="option"
+                                    class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-gray-50"
+                                    :class="displayCurrency === c.code ? 'bg-gray-50 font-medium text-gray-900' : 'text-gray-700'"
+                                    @click="selectCurrency(c.code)"
+                                >
+                                    <span class="truncate">{{ c.code }} · {{ c.symbol }}<span v-if="c.label" class="text-gray-400"> — {{ c.label }}</span></span>
+                                    <Check v-if="displayCurrency === c.code" class="h-4 w-4 shrink-0 text-gray-500" />
+                                </button>
+                                <p v-if="filteredOtherCurrencies.length === 0" class="px-3 py-2 text-center text-xs text-gray-500">Nenhuma moeda encontrada.</p>
+                            </div>
+                        </div>
                     </CheckoutDropdown>
                 </div>
             </div>

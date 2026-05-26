@@ -59,6 +59,29 @@ class CheckoutGeoSuggestionsTest extends TestCase
             ->where('suggested_currency', 'EUR'));
     }
 
+    public function test_mexico_country_suggests_mxn(): void
+    {
+        $this->withoutMiddleware(EnsureInstalled::class);
+
+        User::factory()->create([
+            'role' => User::ROLE_INFOPRODUTOR,
+            'tenant_id' => 1,
+        ]);
+
+        $product = $this->createTestProduct([
+            'name' => 'Geo MX',
+            'price' => 10,
+        ]);
+
+        $response = $this->withHeader('CF-IPCountry', 'MX')
+            ->get('/c/'.$product->checkout_slug);
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->where('suggested_country_code', 'MX')
+            ->where('suggested_currency', 'MXN'));
+    }
+
     public function test_checkout_force_overrides_geo_suggestions(): void
     {
         $this->withoutMiddleware(EnsureInstalled::class);

@@ -3,7 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Setting;
+use App\Services\ExchangeRateService;
+use App\Support\CheckoutCurrencyCatalog;
 use App\Support\CheckoutTranslations;
+use Illuminate\Http\JsonResponse;
 use App\Support\DockerSetupState;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
@@ -29,6 +32,7 @@ class SettingsController extends Controller
         if (! is_array($currencies)) {
             $currencies = config('products.currencies');
         }
+        $currencies = CheckoutCurrencyCatalog::mergeTenantCurrencies($currencies);
 
         $gitAvailable = is_dir(base_path('.git'));
         $cloudMode = (bool) config('getfy.cloud_mode', false);
@@ -70,6 +74,7 @@ class SettingsController extends Controller
             && trim($storageS3SecretRaw) === '';
 
         return Inertia::render('Settings/Index', [
+            'currency_catalog_presets' => CheckoutCurrencyCatalog::presetsMap(),
             'current_version' => $currentVersion,
             'updates_enabled' => config('getfy.updates_enabled', true),
             'git_available' => $gitAvailable,
@@ -197,5 +202,39 @@ class SettingsController extends Controller
         }
 
         return back()->with('success', 'Configurações salvas.');
+    }
+
+    public function importCurrencyCatalog(ExchangeRateService $exchangeRateService): JsonResponse
+    {
+        $tenantId = auth()->user()->tenant_id;
+        $rows = $exchangeRateService->buildFullCatalogWithRates();
+        Setting::set('currencies', $rows, $tenantId);
+
+        return response()->json([
+            'success' => true,
+            'count' => count($rows),
+            'currencies' => $rows,
+        ]);
+    }
+
+    public function syncCurrencyRates(ExchangeRateService $exchangeRateService): JsonResponse
+    {
+        $tenantId = auth()->user()->tenant_id;
+        $raw = Setting::get('currencies', null, $tenantId);
+        $existing = $raw
+            ? (is_string($raw) ? json_decode($raw, true) : $raw)
+            : config('products.currencies');
+        if (! is_array($existing)) {
+            $existing = config('products.currencies');
+        }
+        $merged = CheckoutCurrencyCatalog::mergeTenantCurrencies($existing);
+        $rows = $exchangeRateService->applyRatesToCurrencyRows($merged);
+        Setting::set('currencies', $rows, $tenantId);
+
+        return response()->json([
+            'success' => true,
+            'count' => count($rows),
+            'currencies' => $rows,
+        ]);
     }
 }

@@ -103,6 +103,8 @@ const {
     setCurrency,
     t,
     currencies: currencyList,
+    featuredCurrencies,
+    otherCurrencies,
     priceInCurrency,
     formatPrice,
     supportedLocales,
@@ -492,6 +494,8 @@ const hasCustomBodyEnd = computed(() => String(customBodyEndHtml.value).trim() !
                             :locale="locale"
                             :supported-locales="supportedLocales"
                             :currency-list="currencyList"
+                            :featured-currencies="featuredCurrencies"
+                            :other-currencies="otherCurrencies"
                             :locale-labels="localeLabels"
                             @set-locale="onUserSetLocale"
                             @set-currency="onUserSetCurrency"

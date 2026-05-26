@@ -1897,6 +1897,10 @@ function submit() {
                                 <p v-if="!tenantCurrenciesNonBrl.length" class="text-sm text-zinc-600 dark:text-zinc-400">
                                     Nenhuma moeda extra além de BRL. Adicione moedas em Configurações para preencher valores aqui.
                                 </p>
+                                <p v-else class="text-xs text-zinc-500 dark:text-zinc-400">
+                                    {{ tenantCurrenciesNonBrl.length }} moeda(s) habilitada(s) no checkout — preencha apenas as que deseja cobrar com valor fixo.
+                                </p>
+                                <div class="max-h-96 space-y-4 overflow-y-auto pr-1">
                                 <div v-for="row in tenantCurrenciesNonBrl" :key="row.code" class="max-w-xs">
                                     <label class="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">
                                         {{ row.label || row.code }} ({{ String(row.code).toUpperCase() }}) — opcional
@@ -1909,6 +1913,7 @@ function submit() {
                                         :placeholder="`Ex.: 10.00 em ${String(row.code).toUpperCase()}`"
                                         :class="inputClass"
                                     />
+                                </div>
                                 </div>
                                 <p v-if="form.errors['custom_prices_by_currency.amounts']" class="text-sm text-red-600 dark:text-red-400">
                                     {{ form.errors['custom_prices_by_currency.amounts'] }}

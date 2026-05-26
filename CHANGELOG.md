@@ -16,6 +16,12 @@
   - **Vendas**, **Dashboard** e **Relatórios** passam a exibir cada venda e os resumos **na moeda original do pedido** (USD, EUR, BRL, etc.) — sem converter tudo para real na interface.
   - Totais do período agrupados **por moeda** (`valor_por_moeda`), para acompanhar receita internacional com valores corretos em cada divisa.
   - Formatação monetária por moeda (`Intl`) na listagem, cards de estatísticas e exportações relacionadas.
+- **Checkout internacional (190+ países)**:
+  - Catálogo central de moedas alinhado a **CajuPay Global** e **Stripe** (`config/checkout_currencies.php`), com geo automático por país (ex.: `MX` → MXN).
+  - Seletor de moeda no checkout com **BRL, USD e EUR em destaque** e **busca** nas demais moedas habilitadas.
+  - **Configurações → Moedas**: botões **Importar moedas internacionais** e **Atualizar todas as taxas** (Frankfurter); comando `php artisan checkout:sync-currency-rates`.
+  - Conversão de preços no backend via `rate_to_brl` genérico (sem hardcode só EUR/USD).
+  - **Produto**: preços customizados por moeda para todas as moedas habilitadas do tenant (lista com scroll).
 
 ### Melhorias
 
