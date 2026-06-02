@@ -18,7 +18,6 @@ const pushEnabled = computed(() => !!page.props.push_enabled);
 const {
     pushRegistered,
     registerAndSubscribe,
-    pushSubscribing,
     checkExistingSubscription,
     lastPushError,
     reactivatePush,
@@ -33,13 +32,27 @@ const notificationPermissionGranted = computed(
     () => hasNotificationAPI.value && window.Notification.permission === 'granted'
 );
 const pushActive = computed(() => notificationPermissionGranted.value && pushRegistered.value);
-// Botão "Ativar": este navegador não inscrito, push habilitado no servidor, API disponível e permissão não negada
+
+const pushErrorLabel = computed(() =>
+    lastPushError.value ? pushErrorMessage(lastPushError.value) : null,
+);
+
+const canReactivatePush = computed(
+    () =>
+        pushEnabled.value &&
+        notificationPermissionGranted.value &&
+        !pushActive.value &&
+        (lastPushError.value || !pushRegistered.value),
+);
+
+// Botão "Ativar": permissão ainda não concedida neste navegador
 const canActivatePush = computed(
     () =>
         pushEnabled.value &&
         !pushActive.value &&
         hasNotificationAPI.value &&
-        window.Notification.permission !== 'denied'
+        window.Notification.permission !== 'denied' &&
+        !canReactivatePush.value,
 );
 
 const loading = ref(false);
@@ -69,17 +82,14 @@ async function fetchNotifications() {
 watch(
     () => props.open,
     async (isOpen) => {
-        if (isOpen) {
-            const synced = await checkExistingSubscription();
-            await fetchNotifications();
-            // Se o browser tiver subscription válida, mas o endpoint de listagem ainda retornar estado antigo,
-            // usamos a confirmação local para evitar mostrar "inativo" incorretamente.
+        if (!isOpen) return;
+        fetchNotifications();
+        checkExistingSubscription({ silent: true }).then((synced) => {
             if (synced && !pushSubscribed.value) {
                 pushSubscribed.value = true;
             }
-        }
+        });
     },
-    { immediate: true }
 );
 
 function close() {
@@ -159,18 +169,6 @@ async function activateNotifications() {
 }
 
 const hasUnread = computed(() => unreadCount.value > 0);
-
-const pushErrorLabel = computed(() =>
-    lastPushError.value ? pushErrorMessage(lastPushError.value) : null,
-);
-
-const canReactivatePush = computed(
-    () =>
-        pushEnabled.value &&
-        notificationPermissionGranted.value &&
-        !pushActive.value &&
-        (lastPushError.value || !pushRegistered.value),
-);
 
 async function reactivateNotifications() {
     activatingPush.value = true;
@@ -260,10 +258,10 @@ async function reactivateNotifications() {
                             v-if="canActivatePush"
                             type="button"
                             class="mt-2 w-full rounded-lg bg-[var(--color-primary)] px-3 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-60"
-                            :disabled="activatingPush || pushSubscribing"
+                            :disabled="activatingPush"
                             @click="activateNotifications"
                         >
-                            {{ activatingPush || pushSubscribing ? 'Aguarde...' : 'Ativar notificações' }}
+                            {{ activatingPush ? 'Aguarde...' : 'Ativar notificações' }}
                         </button>
                         <p
                             v-else-if="pushEnabled && !pushActive && notificationPermissionDenied"
@@ -281,10 +279,10 @@ async function reactivateNotifications() {
                             v-if="canReactivatePush"
                             type="button"
                             class="mt-2 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100 disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-                            :disabled="activatingPush || pushSubscribing"
+                            :disabled="activatingPush"
                             @click="reactivateNotifications"
                         >
-                            {{ activatingPush || pushSubscribing ? 'Aguarde...' : 'Reativar notificações' }}
+                            {{ activatingPush ? 'Aguarde...' : 'Reativar notificações' }}
                         </button>
                         <p
                             v-else-if="!pushEnabled"

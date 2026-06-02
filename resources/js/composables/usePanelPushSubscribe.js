@@ -10,8 +10,14 @@ const PANEL_SW_SCRIPT = '/painel-sw.js';
 const PANEL_SW_SCOPE = '/painel/';
 const PANEL_PUSH_SUBSCRIBE_URL = '/painel/push-subscribe';
 
+// Estado compartilhado entre AppLayout, NotificationsPanel e PwaInstallPrompt
+const pushSubscribing = ref(false);
+const pushRegistered = ref(false);
+const lastPushError = ref(null);
+
 let inertiaHealListenerRegistered = false;
 let ensureDebounceTimer = null;
+let ensureInFlight = null;
 
 /**
  * Registra o Service Worker do painel e subscribe para push com auto-cura após deploy.
@@ -21,9 +27,6 @@ export function usePanelPushSubscribe() {
     const pushEnabled = computed(() => !!page.props.push_enabled);
     const vapidPublic = computed(() => page.props.vapid_public ?? null);
     const swScope = computed(() => page.props.pwa_sw_scope ?? PANEL_SW_SCOPE);
-    const pushSubscribing = ref(false);
-    const pushRegistered = ref(false);
-    const lastPushError = ref(null);
 
     async function syncSubscriptionToServer(payload) {
         const { data } = await axios.post(PANEL_PUSH_SUBSCRIBE_URL, payload);
@@ -50,6 +53,16 @@ export function usePanelPushSubscribe() {
         return result.ok;
     }
 
+    async function runEnsureDeduped(options = {}) {
+        if (ensureInFlight) {
+            return ensureInFlight;
+        }
+        ensureInFlight = runEnsure(options).finally(() => {
+            ensureInFlight = null;
+        });
+        return ensureInFlight;
+    }
+
     async function registerAndSubscribe({ forceRenew = false } = {}) {
         lastPushError.value = null;
         pushRegistered.value = false;
@@ -74,7 +87,7 @@ export function usePanelPushSubscribe() {
         }
 
         if (pushSubscribing.value) {
-            return false;
+            return ensureInFlight ?? false;
         }
 
         pushSubscribing.value = true;
@@ -82,10 +95,10 @@ export function usePanelPushSubscribe() {
             const reg = await navigator.serviceWorker.register(PANEL_SW_SCRIPT, { scope: swScope.value });
             attachServiceWorkerPushListeners(reg, () => {
                 if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-                    runEnsure({ forceRenew: true }).catch(() => {});
+                    runEnsureDeduped({ forceRenew: true }).catch(() => {});
                 }
             });
-            return await runEnsure({ forceRenew });
+            return await runEnsureDeduped({ forceRenew });
         } catch (e) {
             console.warn('Panel push subscribe failed:', e);
             lastPushError.value = 'subscription_failed';
@@ -95,7 +108,11 @@ export function usePanelPushSubscribe() {
         }
     }
 
-    async function checkExistingSubscription({ forceRenew = false } = {}) {
+    /**
+     * @param {{ forceRenew?: boolean, silent?: boolean }} [options]
+     * silent=true: não bloqueia UI (painel de notificações ao abrir)
+     */
+    async function checkExistingSubscription({ forceRenew = false, silent = false } = {}) {
         if (typeof navigator === 'undefined' || !navigator.serviceWorker?.getRegistration) {
             return false;
         }
@@ -107,17 +124,25 @@ export function usePanelPushSubscribe() {
             return false;
         }
 
-        pushSubscribing.value = true;
+        if (!silent) {
+            if (pushSubscribing.value) {
+                return ensureInFlight ?? false;
+            }
+            pushSubscribing.value = true;
+        }
+
         try {
             const reg = await navigator.serviceWorker.register(PANEL_SW_SCRIPT, { scope: swScope.value });
             attachServiceWorkerPushListeners(reg, () => {
-                runEnsure({ forceRenew: true }).catch(() => {});
+                runEnsureDeduped({ forceRenew: true }).catch(() => {});
             });
-            return await runEnsure({ forceRenew });
+            return await runEnsureDeduped({ forceRenew });
         } catch (_) {
             return false;
         } finally {
-            pushSubscribing.value = false;
+            if (!silent) {
+                pushSubscribing.value = false;
+            }
         }
     }
 
@@ -156,12 +181,16 @@ export function usePanelPushSubscribe() {
         }
         ensureDebounceTimer = setTimeout(() => {
             if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-                checkExistingSubscription().catch(() => {});
+                checkExistingSubscription({ silent: true }).catch(() => {});
             }
         }, 2000);
     }
 
     onMounted(() => {
+        if (!pushEnabled.value) {
+            return;
+        }
+
         if (isStandalone.value && notificationPermission.value === 'default') {
             permissionCheckInterval = setInterval(() => {
                 if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
@@ -169,7 +198,7 @@ export function usePanelPushSubscribe() {
                         clearInterval(permissionCheckInterval);
                         permissionCheckInterval = null;
                     }
-                    registerAndSubscribe();
+                    registerAndSubscribe().catch(() => {});
                 }
             }, 1500);
             setTimeout(() => {
@@ -178,8 +207,8 @@ export function usePanelPushSubscribe() {
                     permissionCheckInterval = null;
                 }
             }, 60000);
-        } else {
-            registerAndSubscribe();
+        } else if (notificationPermission.value === 'granted') {
+            checkExistingSubscription({ silent: true }).catch(() => {});
         }
 
         if (!inertiaHealListenerRegistered) {

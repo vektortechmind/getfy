@@ -52,6 +52,46 @@ export function subscriptionMatchesVapid(subscription, vapidPublicBase64) {
 }
 
 /**
+ * Aguarda o registration ficar utilizável sem depender de navigator.serviceWorker.ready
+ * (em páginas fora do scope do SW, ex. /dashboard com scope /painel/, ready pode nunca resolver).
+ */
+export function waitForRegistrationReady(registration, timeoutMs = 12000) {
+    if (!registration) {
+        return Promise.reject(new Error('no_registration'));
+    }
+    if (registration.active) {
+        return Promise.resolve(registration);
+    }
+
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            if (registration.active || registration.waiting || registration.installing) {
+                resolve(registration);
+                return;
+            }
+            reject(new Error('sw_activation_timeout'));
+        }, timeoutMs);
+
+        const finish = () => {
+            clearTimeout(timer);
+            resolve(registration);
+        };
+
+        const worker = registration.installing || registration.waiting;
+        if (!worker) {
+            finish();
+            return;
+        }
+
+        worker.addEventListener('statechange', () => {
+            if (registration.active) {
+                finish();
+            }
+        });
+    });
+}
+
+/**
  * Garante subscription válida e sincronizada com o servidor.
  *
  * @param {object} options
@@ -84,15 +124,21 @@ export async function ensurePushSubscription({
 
     let renewed = false;
 
+    let reg;
     try {
-        await navigator.serviceWorker.register(swScriptUrl, { scope: swScope });
-    } catch {
-        return { ok: false, reason: 'service_worker_registration_failed', renewed: false };
+        reg = await navigator.serviceWorker.register(swScriptUrl, { scope: swScope });
+        await waitForRegistrationReady(reg);
+    } catch (e) {
+        if (e?.message === 'sw_activation_timeout') {
+            reg = await navigator.serviceWorker.getRegistration(swScope);
+        } else {
+            return { ok: false, reason: 'service_worker_registration_failed', renewed: false };
+        }
     }
 
-    await navigator.serviceWorker.ready;
-
-    const reg = await navigator.serviceWorker.getRegistration(swScope);
+    if (!reg) {
+        reg = await navigator.serviceWorker.getRegistration(swScope);
+    }
     if (!reg?.pushManager) {
         return { ok: false, reason: 'service_worker_not_found', renewed: false };
     }
@@ -198,6 +244,7 @@ export function pushErrorMessage(reason) {
         subscription_invalid: 'Inscrição push inválida.',
         vapid_mismatch: 'Inscrição desatualizada — reative as notificações.',
         subscription_stale: 'Inscrição expirada — reative as notificações.',
+        sw_activation_timeout: 'Service worker demorou para iniciar — tente reativar.',
     };
     return messages[reason] || 'Não foi possível ativar as notificações.';
 }
