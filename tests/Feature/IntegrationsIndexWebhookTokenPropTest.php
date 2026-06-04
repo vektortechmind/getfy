@@ -40,6 +40,8 @@ class IntegrationsIndexWebhookTokenPropTest extends TestCase
             ->assertInertia(fn ($page) => $page
                 ->has('webhooks', 2)
                 ->where('webhooks.0.has_bearer_token', true)
-                ->where('webhooks.1.has_bearer_token', false));
+                ->where('webhooks.1.has_bearer_token', false)
+                ->has('webhook_event_catalog.groups')
+                ->has('webhook_event_catalog.events'));
     }
 }

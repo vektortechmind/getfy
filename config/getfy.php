@@ -32,11 +32,15 @@ return [
         /** Se true, todos os webhooks de integração rodam síncronos (pode alongar requests). */
         'dispatch_all_sync' => filter_var(env('GETFY_WEBHOOKS_DISPATCH_ALL_SYNC', false), FILTER_VALIDATE_BOOLEAN),
         /**
-         * Por padrão false (LGPD / Meta): customer no webhook só traz *_hash (SHA-256).
-         * true = inclui também email, phone, cpf e name em texto claro (CRM legado).
+         * Webhooks de integração sempre enviam customer em texto claro; esta flag só afeta sanitização legada.
          */
         'include_plain_customer_pii' => filter_var(
-            env('GETFY_WEBHOOKS_PLAIN_CUSTOMER_PII', false),
+            env('GETFY_WEBHOOKS_PLAIN_CUSTOMER_PII', true),
+            FILTER_VALIDATE_BOOLEAN
+        ),
+        /** false por padrão: não enviar email_hash, phone_hash, etc. (use true só para Meta CAPI). */
+        'include_customer_hashes' => filter_var(
+            env('GETFY_WEBHOOKS_CUSTOMER_HASHES', false),
             FILTER_VALIDATE_BOOLEAN
         ),
     ],

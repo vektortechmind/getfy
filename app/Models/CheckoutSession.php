@@ -83,6 +83,16 @@ class CheckoutSession extends Model
         return $this->belongsTo(Product::class);
     }
 
+    public function productOffer(): BelongsTo
+    {
+        return $this->belongsTo(ProductOffer::class);
+    }
+
+    public function subscriptionPlan(): BelongsTo
+    {
+        return $this->belongsTo(SubscriptionPlan::class);
+    }
+
     public function order(): BelongsTo
     {
         return $this->belongsTo(Order::class);

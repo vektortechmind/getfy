@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Webhook;
 use App\Models\WebhookLog;
+use App\Services\WebhookDashboardService;
+use App\Support\WebhookEventCatalog;
 use App\Support\WebhookPayloadBuilder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,6 +15,45 @@ use Illuminate\Validation\Rule;
 
 class WebhookController extends Controller
 {
+    public function dashboardStats(WebhookDashboardService $dashboard): JsonResponse
+    {
+        $tenantId = auth()->user()->tenant_id;
+
+        return response()->json($dashboard->forTenant($tenantId));
+    }
+
+    public function payloadPreview(Request $request): JsonResponse
+    {
+        $slug = trim((string) $request->query('slug', 'pedido_pago'));
+
+        if (! WebhookEventCatalog::isAllowedSlug($slug)) {
+            return response()->json([
+                'message' => 'Evento inválido.',
+            ], 422);
+        }
+
+        $innerPayload = WebhookPayloadBuilder::sanitizePayload(
+            WebhookPayloadBuilder::sampleTestPayload($slug),
+        );
+
+        $envelope = [
+            'event' => $slug,
+            'event_label' => WebhookEventCatalog::labelForSlug($slug),
+            'payload' => $innerPayload,
+            'timestamp' => now()->toIso8601String(),
+        ];
+
+        return response()->json([
+            'envelope' => $envelope,
+            'payload' => $innerPayload,
+            '_meta' => [
+                'note' => 'Exemplo representativo. Campos reais vêm do pedido/sessão no disparo.',
+                'include_customer_hashes' => (bool) config('getfy.webhooks.include_customer_hashes', false),
+                'include_plain_customer_pii' => (bool) config('getfy.webhooks.include_plain_customer_pii', true),
+            ],
+        ]);
+    }
+
     public function index(): JsonResponse
     {
         $tenantId = auth()->user()->tenant_id;

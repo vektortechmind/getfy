@@ -13,6 +13,7 @@ use App\Models\SpedyIntegration;
 use App\Models\UtmifyIntegration;
 use App\Models\ApiApplication;
 use App\Models\Webhook;
+use App\Support\WebhookEventCatalog;
 use App\Plugins\PluginExtensionRegistry;
 use App\Plugins\PluginRegistry;
 use Illuminate\Http\RedirectResponse;
@@ -178,6 +179,7 @@ class IntegrationsController extends Controller
             'gateway_order' => $gatewayOrder,
             'webhooks' => $webhooks,
             'webhook_events' => $webhookEvents,
+            'webhook_event_catalog' => WebhookEventCatalog::forUi(),
             'utmify_integrations' => $utmifyIntegrations,
             'spedy_integrations' => $spedyIntegrations,
             'cademi_integrations' => $cademiIntegrations,

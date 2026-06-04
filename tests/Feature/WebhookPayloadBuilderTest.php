@@ -33,6 +33,7 @@ class WebhookPayloadBuilderTest extends TestCase
             'price' => 149.90,
             'currency' => 'BRL',
             'position' => 0,
+            'checkout_slug' => ProductOffer::generateUniqueCheckoutSlug(),
         ]);
 
         $order = Order::create([
@@ -54,24 +55,119 @@ class WebhookPayloadBuilderTest extends TestCase
         $payload = WebhookPayloadBuilder::forOrderEvent($order);
 
         $this->assertSame('Curso Premium', $payload['product']['name']);
+        $this->assertSame('curso-premium', $payload['product']['checkout_slug']);
         $this->assertSame('Oferta Black Friday', $payload['offer']['name']);
+        $this->assertSame($offer->id, $payload['offer']['id']);
+        $this->assertSame($offer->public_id, $payload['offer']['public_id']);
+        $this->assertSame('exclusive_checkout', $payload['offer']['offer_type']);
+        $this->assertSame($offer->id, $payload['order']['product_offer_id']);
+        $this->assertStringContainsString('/c/', $payload['checkoutUrl']);
+        $this->assertStringNotContainsString('offer=', $payload['checkoutUrl']);
         $this->assertSame('pix', $payload['payment']['method']);
         $this->assertSame('meta', $payload['tracking']['utm_source']);
-        $this->assertArrayNotHasKey('email', $payload['customer']);
-        $this->assertArrayNotHasKey('cpf', $payload['customer']);
-        $this->assertArrayNotHasKey('phone', $payload['customer']);
-        $this->assertArrayNotHasKey('name', $payload['customer']);
-        $this->assertSame(
-            hash('sha256', 'buyer@test.com'),
-            $payload['customer']['email_hash']
-        );
-        $this->assertSame(
-            hash('sha256', '12345678900'),
-            $payload['customer']['cpf_hash']
-        );
+        $this->assertSame('buyer@test.com', $payload['customer']['email']);
+        $this->assertSame('12345678900', $payload['customer']['docNumber']);
+        $this->assertSame('cpf', $payload['customer']['docType']);
+        $this->assertArrayNotHasKey('email_hash', $payload['customer']);
+        $this->assertArrayNotHasKey('name_hash', $payload['customer']);
+        $this->assertSame('paid', $payload['status']);
+        $this->assertSame('pix', $payload['paymentMethod']);
+        $this->assertSame('Pix', $payload['paymentMethodName']);
+        $this->assertArrayHasKey('checkoutUrl', $payload);
         $this->assertArrayNotHasKey('order_bumps', $payload);
         $this->assertArrayNotHasKey('products', $payload);
         $this->assertArrayNotHasKey('email', $payload['order']);
+    }
+
+    public function test_checkout_url_includes_offer_token_for_variant_offers(): void
+    {
+        $product = $this->createTestProduct([
+            'name' => 'Produto multi-oferta',
+            'checkout_slug' => 'multi-oferta',
+        ]);
+
+        $offerA = ProductOffer::create([
+            'product_id' => $product->id,
+            'public_id' => 'OfferTokenA',
+            'name' => 'Oferta A',
+            'price' => 100,
+            'currency' => 'BRL',
+            'position' => 0,
+            'checkout_slug' => '',
+        ]);
+
+        $offerB = ProductOffer::create([
+            'product_id' => $product->id,
+            'public_id' => 'OfferTokenB',
+            'name' => 'Oferta B',
+            'price' => 200,
+            'currency' => 'BRL',
+            'position' => 1,
+            'checkout_slug' => ProductOffer::generateUniqueCheckoutSlug(),
+        ]);
+
+        $orderA = Order::create([
+            'tenant_id' => $product->tenant_id,
+            'product_id' => $product->id,
+            'product_offer_id' => $offerA->id,
+            'status' => 'completed',
+            'amount' => 100,
+            'currency' => 'BRL',
+            'email' => 'a@test.com',
+        ]);
+
+        $orderB = Order::create([
+            'tenant_id' => $product->tenant_id,
+            'product_id' => $product->id,
+            'product_offer_id' => $offerB->id,
+            'status' => 'completed',
+            'amount' => 200,
+            'currency' => 'BRL',
+            'email' => 'b@test.com',
+        ]);
+
+        $payloadA = WebhookPayloadBuilder::forOrderEvent($orderA);
+        $payloadB = WebhookPayloadBuilder::forOrderEvent($orderB);
+
+        $this->assertSame('OfferTokenA', $payloadA['offer']['public_id']);
+        $this->assertSame('OfferTokenB', $payloadB['offer']['public_id']);
+        $this->assertSame('variant', $payloadA['offer']['offer_type']);
+        $this->assertSame('exclusive_checkout', $payloadB['offer']['offer_type']);
+        $this->assertStringContainsString('offer=OfferTokenA', $payloadA['checkoutUrl']);
+        $this->assertStringNotContainsString('offer=', $payloadB['checkoutUrl']);
+        $this->assertNotSame($payloadA['checkoutUrl'], $payloadB['checkoutUrl']);
+    }
+
+    public function test_cart_abandoned_payload_tracks_selected_offer(): void
+    {
+        $product = $this->createTestProduct(['checkout_slug' => 'abandono-slug']);
+
+        $offer = ProductOffer::create([
+            'product_id' => $product->id,
+            'public_id' => 'AbandonOffer1',
+            'name' => 'Oferta recuperação',
+            'price' => 79.9,
+            'currency' => 'BRL',
+            'position' => 0,
+            'checkout_slug' => '',
+        ]);
+
+        $session = CheckoutSession::create([
+            'tenant_id' => $product->tenant_id,
+            'product_id' => $product->id,
+            'product_offer_id' => $offer->id,
+            'checkout_slug' => $product->checkout_slug,
+            'session_token' => 'tok-'.uniqid('', true),
+            'step' => CheckoutSession::STEP_FORM_STARTED,
+            'email' => 'lead@test.com',
+            'name' => 'Lead Teste',
+        ]);
+
+        $payload = WebhookPayloadBuilder::forCartAbandoned($session);
+
+        $this->assertSame($offer->id, $payload['checkout_session']['product_offer_id']);
+        $this->assertSame('AbandonOffer1', $payload['offer']['public_id']);
+        $this->assertStringContainsString('offer=AbandonOffer1', $payload['checkoutUrl']);
     }
 
     public function test_order_payload_includes_order_bump_line_items(): void
@@ -102,7 +198,7 @@ class WebhookPayloadBuilderTest extends TestCase
             'position' => 1,
         ]);
 
-        $payload = WebhookPayloadBuilder::forOrderEvent($order->fresh());
+        $payload = WebhookPayloadBuilder::forOrderEvent($order->fresh(['orderItems.product']));
 
         $this->assertCount(1, $payload['order_bumps']);
         $this->assertSame('Order bump extra', $payload['order_bumps'][0]['name']);
@@ -141,7 +237,7 @@ class WebhookPayloadBuilderTest extends TestCase
         $this->assertSame('spring', $payload['tracking']['utm_campaign']);
     }
 
-    public function test_tracking_does_not_include_unlisted_metadata_keys(): void
+    public function test_tracking_includes_fbc_fbp_sck_from_session(): void
     {
         $product = $this->createTestProduct();
 
@@ -154,7 +250,6 @@ class WebhookPayloadBuilderTest extends TestCase
             'email' => 'buyer@test.com',
             'metadata' => [
                 'utm_source' => 'meta',
-                'fbp' => 'should-not-appear',
                 'custom_field' => 'ignored',
             ],
         ]);
@@ -168,7 +263,8 @@ class WebhookPayloadBuilderTest extends TestCase
             'order_id' => $order->id,
             'tracking_metadata' => [
                 'fbp' => 'fb.1.example',
-                'fbc' => 'should-not-appear',
+                'fbc' => 'fb.1.click',
+                'sck' => 'sck-value',
                 'gclid' => 'abc123',
             ],
         ]);
@@ -177,8 +273,10 @@ class WebhookPayloadBuilderTest extends TestCase
 
         $this->assertSame('meta', $payload['tracking']['utm_source']);
         $this->assertSame('abc123', $payload['tracking']['gclid']);
-        $this->assertArrayNotHasKey('fbp', $payload['tracking']);
-        $this->assertArrayNotHasKey('fbc', $payload['tracking']);
+        $this->assertSame('fb.1.example', $payload['tracking']['fbp']);
+        $this->assertSame('fb.1.click', $payload['tracking']['fbc']);
+        $this->assertSame('sck-value', $payload['tracking']['sck']);
+        $this->assertSame('fb.1.example', $payload['fbp']);
         $this->assertArrayNotHasKey('custom_field', $payload['tracking']);
     }
 
@@ -280,6 +378,7 @@ class WebhookPayloadBuilderTest extends TestCase
 
         $this->assertArrayNotHasKey('qrcode', $payload['pix']);
         $this->assertSame('00020126580014br.gov.bcb.pix', $payload['pix']['copy_paste']);
+        $this->assertSame('00020126580014br.gov.bcb.pix', $payload['pix']['qrCode']);
     }
 
     public function test_access_extra_strips_password(): void
@@ -308,6 +407,8 @@ class WebhookPayloadBuilderTest extends TestCase
 
     public function test_meta_compatible_hashes_for_facebook_style_integrations(): void
     {
+        config(['getfy.webhooks.include_customer_hashes' => true]);
+
         $product = $this->createTestProduct();
         $order = Order::create([
             'tenant_id' => $product->tenant_id,
@@ -325,6 +426,44 @@ class WebhookPayloadBuilderTest extends TestCase
         $this->assertSame(hash('sha256', 'buyer@email.com'), $payload['customer']['email_hash']);
         $this->assertSame(hash('sha256', '5511988887777'), $payload['customer']['phone_hash']);
         $this->assertSame(hash('sha256', '12345678900'), $payload['customer']['cpf_hash']);
+    }
+
+    public function test_customer_hashes_only_when_explicitly_enabled(): void
+    {
+        config(['getfy.webhooks.include_customer_hashes' => false]);
+
+        $product = $this->createTestProduct();
+        $order = Order::create([
+            'tenant_id' => $product->tenant_id,
+            'product_id' => $product->id,
+            'status' => 'completed',
+            'amount' => 10,
+            'currency' => 'BRL',
+            'email' => 'buyer@test.com',
+            'cpf' => '12345678900',
+        ]);
+
+        $payload = WebhookPayloadBuilder::forOrderEvent($order);
+
+        $this->assertSame('buyer@test.com', $payload['customer']['email']);
+        $this->assertArrayNotHasKey('email_hash', $payload['customer']);
+
+        config(['getfy.webhooks.include_customer_hashes' => true]);
+        $payloadWithHashes = WebhookPayloadBuilder::forOrderEvent($order->fresh());
+        $this->assertSame(hash('sha256', 'buyer@test.com'), $payloadWithHashes['customer']['email_hash']);
+    }
+
+    public function test_sample_test_payload_includes_plain_customer(): void
+    {
+        $payload = WebhookPayloadBuilder::sampleTestPayload('pedido_pago');
+
+        $this->assertTrue($payload['test'] ?? false);
+        $this->assertSame('exemplo@email.com', $payload['customer']['email']);
+        $this->assertSame('Cliente Exemplo', $payload['customer']['name']);
+        $this->assertSame('paid', $payload['status']);
+        $this->assertSame('pix', $payload['paymentMethod']);
+        $this->assertSame('B8BcHrY', $payload['offer']['public_id']);
+        $this->assertStringContainsString('offer=B8BcHrY', $payload['checkoutUrl']);
     }
 
     public function test_dispatch_webhook_job_sends_product_name(): void

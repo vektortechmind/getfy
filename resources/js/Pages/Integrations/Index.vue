@@ -25,7 +25,7 @@ const APPS_BASE = [
     {
         id: 'webhook',
         name: 'Webhook',
-        description: 'Envie eventos da plataforma para sua URL. Configure quais eventos deseja receber e use Bearer token para autenticação.',
+        description: 'Painel com métricas, logs e documentação de payloads por evento. Configure URL, eventos e Bearer token.',
         image: 'images/integrations/webhook.png',
     },
     {
@@ -61,6 +61,10 @@ const props = defineProps({
     },
     webhooks: { type: Array, default: () => [] },
     webhook_events: { type: Object, default: () => ({}) },
+    webhook_event_catalog: {
+        type: Object,
+        default: () => ({ groups: [], events: [] }),
+    },
     utmify_integrations: { type: Array, default: () => [] },
     spedy_integrations: { type: Array, default: () => [] },
     cademi_integrations: { type: Array, default: () => [] },
@@ -324,7 +328,7 @@ watch(() => page.url, () => syncGatewayFromQuery());
                     Integrações
                 </h2>
                 <p class="mb-6 text-sm text-zinc-600 dark:text-zinc-400">
-                    Conecte sua plataforma com sistemas externos via webhooks e outras integrações.
+                    Configure webhooks, gateways e apps para conectar sua operação.
                 </p>
                 <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     <template v-for="app in APPS" :key="app.id">
@@ -378,6 +382,7 @@ watch(() => page.url, () => syncGatewayFromQuery());
             :open="webhookSidebarOpen"
             :webhooks="webhooks"
             :webhook-events="webhook_events"
+            :webhook-event-catalog="webhook_event_catalog"
             :products="products"
             @close="closeWebhookSidebar"
             @saved="onWebhookSaved"

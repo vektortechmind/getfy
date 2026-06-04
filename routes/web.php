@@ -606,6 +606,8 @@ Route::middleware(['auth', 'admin.tenant', 'role:admin|infoprodutor|team', 'audi
         Route::delete('/integracoes/conversion-pixels/{conversionPixelIntegration}', [\App\Http\Controllers\ConversionPixelIntegrationController::class, 'destroy'])->name('integrations.conversion-pixels.destroy');
 
         Route::get('/integracoes/webhooks', [\App\Http\Controllers\WebhookController::class, 'index'])->name('integrations.webhooks.index');
+        Route::get('/integracoes/webhooks/dashboard-stats', [\App\Http\Controllers\WebhookController::class, 'dashboardStats'])->name('integrations.webhooks.dashboard-stats');
+        Route::get('/integracoes/webhooks/payload-preview', [\App\Http\Controllers\WebhookController::class, 'payloadPreview'])->name('integrations.webhooks.payload-preview');
         Route::post('/integracoes/webhooks', [\App\Http\Controllers\WebhookController::class, 'store'])->name('integrations.webhooks.store');
         Route::put('/integracoes/webhooks/{webhook}', [\App\Http\Controllers\WebhookController::class, 'update'])->name('integrations.webhooks.update');
         Route::delete('/integracoes/webhooks/{webhook}', [\App\Http\Controllers\WebhookController::class, 'destroy'])->name('integrations.webhooks.destroy');

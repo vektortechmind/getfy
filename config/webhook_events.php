@@ -49,6 +49,56 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | UI: grupos e descrições (modal de payload / sidebar)
+    |--------------------------------------------------------------------------
+    */
+    'groups' => [
+        'payment' => [
+            'label' => 'Pagamento',
+            'slugs' => [
+                'pedido_pendente',
+                'pedido_pago',
+                'envio_acesso',
+                'pagamento_recusado',
+                'pedido_cancelado',
+                'reembolso',
+                'pix_gerado',
+                'boleto_gerado',
+            ],
+        ],
+        'recovery' => [
+            'label' => 'Recuperação',
+            'slugs' => ['carrinho_abandonado'],
+        ],
+        'subscription' => [
+            'label' => 'Assinatura',
+            'slugs' => [
+                'assinatura_criada',
+                'assinatura_renovada',
+                'assinatura_cancelada',
+                'assinatura_em_atraso',
+            ],
+        ],
+    ],
+
+    'descriptions' => [
+        'pedido_pendente' => 'Pedido criado aguardando confirmação do pagamento.',
+        'pedido_pago' => 'Pagamento confirmado — compra aprovada.',
+        'envio_acesso' => 'Acesso liberado após aprovação (área de membros, link, etc.).',
+        'pagamento_recusado' => 'Pagamento recusado pelo gateway ou antifraude.',
+        'pedido_cancelado' => 'Pedido cancelado antes da conclusão.',
+        'reembolso' => 'Valor reembolsado ao comprador.',
+        'pix_gerado' => 'Código Pix gerado no checkout (copia e cola / QR).',
+        'boleto_gerado' => 'Boleto emitido com vencimento e linha digitável.',
+        'carrinho_abandonado' => 'Visitante iniciou o checkout mas não concluiu a compra.',
+        'assinatura_criada' => 'Nova assinatura ativa no produto recorrente.',
+        'assinatura_renovada' => 'Cobrança de renovação confirmada.',
+        'assinatura_cancelada' => 'Assinatura cancelada pelo cliente ou painel.',
+        'assinatura_em_atraso' => 'Pagamento da renovação em atraso.',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Test event (manual trigger from UI)
     |--------------------------------------------------------------------------
     */

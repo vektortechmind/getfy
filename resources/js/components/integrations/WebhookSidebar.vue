@@ -4,12 +4,28 @@ import axios from 'axios';
 import Button from '@/components/ui/Button.vue';
 import Checkbox from '@/components/ui/Checkbox.vue';
 import Toggle from '@/components/ui/Toggle.vue';
-import { X, Plus, Pencil, Trash2, Send, ArrowLeft, Loader2, FileText } from 'lucide-vue-next';
+import WebhookKpiStrip from '@/components/integrations/WebhookKpiStrip.vue';
+import WebhookPayloadDocsModal from '@/components/integrations/WebhookPayloadDocsModal.vue';
+import {
+    X,
+    Plus,
+    Trash2,
+    Send,
+    ArrowLeft,
+    Loader2,
+    BookOpen,
+    Settings,
+    Clock,
+} from 'lucide-vue-next';
 
 const props = defineProps({
     open: { type: Boolean, default: false },
     webhooks: { type: Array, default: () => [] },
     webhookEvents: { type: Object, default: () => ({}) },
+    webhookEventCatalog: {
+        type: Object,
+        default: () => ({ groups: [], events: [] }),
+    },
     products: { type: Array, default: () => [] },
 });
 
@@ -21,6 +37,56 @@ const isCreating = ref(false);
 const showingForm = computed(
     () => editingWebhook.value !== null || isCreating.value
 );
+
+const currentView = computed(() => {
+    if (showingForm.value) {
+        return 'form';
+    }
+    if (logsWebhook.value) {
+        return 'logs';
+    }
+    return 'hub';
+});
+
+const headerTitle = computed(() => {
+    if (currentView.value === 'form') {
+        return editingWebhook.value ? 'Editar webhook' : 'Novo webhook';
+    }
+    if (currentView.value === 'logs' && logsWebhook.value) {
+        return `Logs — ${logsWebhook.value.name}`;
+    }
+    return 'Webhooks';
+});
+
+const statsByWebhookId = computed(() => {
+    const map = {};
+    for (const row of dashboardData.value?.webhooks || []) {
+        map[row.id] = row.stats;
+    }
+    return map;
+});
+
+const filteredLogs = computed(() => {
+    const id = logsWebhook.value?.id;
+    if (!id) {
+        return [];
+    }
+    let list = logsByWebhookId.value[id] || [];
+    if (logFilterStatus.value === 'success') {
+        list = list.filter((l) => l.success);
+    } else if (logFilterStatus.value === 'failed') {
+        list = list.filter((l) => !l.success);
+    }
+    const q = logSearchQuery.value.trim().toLowerCase();
+    if (q) {
+        list = list.filter(
+            (l) =>
+                (l.event || '').toLowerCase().includes(q) ||
+                (l.event_label || '').toLowerCase().includes(q),
+        );
+    }
+    return list;
+});
 
 const form = ref({
     name: '',
@@ -44,11 +110,21 @@ const selectedTestEvent = ref('');
 
 const logsByWebhookId = ref({});
 const loadingLogs = ref(null);
-const expandedLogsWebhookId = ref(null);
+const logsWebhook = ref(null);
+const logFilterStatus = ref('all');
+const logSearchQuery = ref('');
+
+const dashboardData = ref(null);
+const loadingDashboard = ref(false);
+const showPayloadDocsModal = ref(false);
+const testWebhookAfterDocs = ref(null);
 
 const logDetailModal = ref(false);
 const selectedLogDetail = ref(null);
 const loadingLogDetail = ref(false);
+const logCopyFeedback = ref('');
+const logRequestPreRef = ref(null);
+const logResponsePreRef = ref(null);
 
 const eventEntries = ref([]);
 
@@ -65,13 +141,95 @@ watch(
     () => {
         if (!props.open) {
             resetForm();
+            logsWebhook.value = null;
+            showPayloadDocsModal.value = false;
+        } else {
+            fetchDashboard();
         }
     }
 );
 
+watch(
+    () => props.open,
+    (isOpen) => {
+        if (isOpen) {
+            fetchDashboard();
+        }
+    },
+);
+
+async function fetchDashboard() {
+    loadingDashboard.value = true;
+    try {
+        const { data } = await axios.get('/integracoes/webhooks/dashboard-stats');
+        dashboardData.value = data;
+    } catch {
+        dashboardData.value = null;
+    } finally {
+        loadingDashboard.value = false;
+    }
+}
+
+function statsForWebhook(w) {
+    return (
+        statsByWebhookId.value[w.id] || {
+            sent: 0,
+            delivered: 0,
+            failed: 0,
+            success_rate: 0,
+            last_sent_at: null,
+        }
+    );
+}
+
+function formatRelativeTime(iso) {
+    if (!iso) {
+        return 'Nenhum envio nas últimas 24h';
+    }
+    const d = new Date(iso);
+    const diffMs = Date.now() - d.getTime();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) {
+        return 'Último envio: agora';
+    }
+    if (mins < 60) {
+        return `Último envio: há ${mins} min`;
+    }
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) {
+        return `Último envio: há ${hours}h`;
+    }
+    return `Último envio: ${formatLogDate(iso)}`;
+}
+
+function openLogsView(w) {
+    logsWebhook.value = w;
+    logFilterStatus.value = 'all';
+    logSearchQuery.value = '';
+    if (!logsByWebhookId.value[w.id]) {
+        fetchLogs(w.id);
+    }
+}
+
+function backToHub() {
+    logsWebhook.value = null;
+}
+
+function openPayloadDocs() {
+    showPayloadDocsModal.value = true;
+}
+
+function onPayloadDocsSendTest() {
+    const active = props.webhooks.find((w) => w.is_active) || props.webhooks[0];
+    if (active) {
+        openTestModal(active);
+    }
+}
+
 function resetForm() {
     editingWebhook.value = null;
     isCreating.value = false;
+    logsWebhook.value = null;
     confirmingDeleteId.value = null;
     form.value = {
         name: '',
@@ -86,6 +244,7 @@ function resetForm() {
 }
 
 function startNew() {
+    logsWebhook.value = null;
     editingWebhook.value = null;
     isCreating.value = true;
     form.value = {
@@ -100,6 +259,7 @@ function startNew() {
 }
 
 function editWebhook(w) {
+    logsWebhook.value = null;
     isCreating.value = false;
     editingWebhook.value = w;
     form.value = {
@@ -180,7 +340,8 @@ async function save() {
             await axios.post('/integracoes/webhooks', payload);
         }
         emit('saved');
-        resetForm(); // volta para a lista
+        resetForm();
+        await fetchDashboard();
     } catch (err) {
         errorMessage.value =
             err.response?.data?.message || 'Erro ao salvar webhook.';
@@ -213,9 +374,8 @@ async function confirmTestSend() {
         });
         testSuccess.value = data.success;
         testMessage.value = data.message || (data.success ? 'Evento enviado com sucesso!' : 'Falha ao enviar.');
-        if (logsByWebhookId.value[w.id]) {
-            await fetchLogs(w.id);
-        }
+        await fetchLogs(w.id);
+        await fetchDashboard();
     } catch (err) {
         testSuccess.value = false;
         testMessage.value =
@@ -234,17 +394,6 @@ async function fetchLogs(webhookId) {
         logsByWebhookId.value[webhookId] = [];
     } finally {
         loadingLogs.value = null;
-    }
-}
-
-function toggleLogs(w) {
-    if (expandedLogsWebhookId.value === w.id) {
-        expandedLogsWebhookId.value = null;
-        return;
-    }
-    expandedLogsWebhookId.value = w.id;
-    if (!logsByWebhookId.value[w.id]) {
-        fetchLogs(w.id);
     }
 }
 
@@ -279,15 +428,24 @@ async function openLogDetail(webhookId, logId) {
 function closeLogDetail() {
     logDetailModal.value = false;
     selectedLogDetail.value = null;
+    logCopyFeedback.value = '';
 }
 
 function formatPayload(obj) {
-    if (obj == null) return '–';
+    if (obj == null) {
+        return '–';
+    }
     try {
         if (typeof obj === 'string') {
             const trimmed = obj.trim();
-            if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-                return JSON.stringify(JSON.parse(obj), null, 2);
+            if (trimmed === '') {
+                return '–';
+            }
+            if (
+                (trimmed.startsWith('{') && trimmed.endsWith('}'))
+                || (trimmed.startsWith('[') && trimmed.endsWith(']'))
+            ) {
+                return JSON.stringify(JSON.parse(trimmed), null, 2);
             }
             return obj;
         }
@@ -297,12 +455,113 @@ function formatPayload(obj) {
     }
 }
 
-function copyToClipboard(text, label) {
-    if (text == null) return;
-    const s = typeof text === 'string' ? text : JSON.stringify(text, null, 2);
-    navigator.clipboard.writeText(s).then(() => {
-        // poderia usar um toast; por simplicidade não adicionamos
-    });
+function fallbackCopy(text) {
+    try {
+        const el = document.createElement('textarea');
+        el.value = text;
+        el.setAttribute('readonly', '');
+        el.style.position = 'fixed';
+        el.style.top = '0';
+        el.style.left = '-9999px';
+        el.style.width = '1px';
+        el.style.height = '1px';
+        el.style.padding = '0';
+        el.style.border = 'none';
+        el.style.outline = 'none';
+        el.style.opacity = '0';
+        document.body.appendChild(el);
+        el.focus({ preventScroll: true });
+        el.select();
+        el.setSelectionRange(0, text.length);
+        const ok = document.execCommand('copy');
+        document.body.removeChild(el);
+        return ok;
+    } catch {
+        return false;
+    }
+}
+
+function showLogCopyFeedback(feedbackKey) {
+    logCopyFeedback.value = feedbackKey;
+    setTimeout(() => {
+        if (logCopyFeedback.value === feedbackKey) {
+            logCopyFeedback.value = '';
+        }
+    }, 2000);
+}
+
+function copyLogText(text, feedbackKey) {
+    const s = (text ?? '').trim();
+    if (!s || s === '–') {
+        return false;
+    }
+
+    if (fallbackCopy(s)) {
+        showLogCopyFeedback(feedbackKey);
+        return true;
+    }
+
+    if (navigator.clipboard?.writeText) {
+        navigator.clipboard
+            .writeText(s)
+            .then(() => showLogCopyFeedback(feedbackKey))
+            .catch(() => {
+                if (fallbackCopy(s)) {
+                    showLogCopyFeedback(feedbackKey);
+                }
+            });
+        return true;
+    }
+
+    return false;
+}
+
+function textFromPre(preRef) {
+    const el = preRef.value;
+    if (!el) {
+        return '';
+    }
+    return (el.innerText || el.textContent || '').trim();
+}
+
+function copyLogRequest() {
+    let text = textFromPre(logRequestPreRef);
+    if (!text || text === '–') {
+        text = formatPayload(selectedLogDetail.value?.request_payload);
+        if (text === '–') {
+            text = '';
+        }
+    }
+    copyLogText(text, 'payload');
+}
+
+function copyLogResponse() {
+    const detail = selectedLogDetail.value;
+    const parts = [];
+
+    if (detail?.response_status != null && detail.response_status !== '') {
+        parts.push(`HTTP ${detail.response_status}`);
+    }
+
+    let body = textFromPre(logResponsePreRef);
+    if (!body || body === '–') {
+        const raw = detail?.response_body;
+        if (raw != null && String(raw).trim() !== '') {
+            body = formatPayload(raw);
+            if (body === '–') {
+                body = String(raw).trim();
+            }
+        }
+    }
+    if (body && body !== '–') {
+        parts.push(body);
+    }
+
+    if (parts.length === 0 && detail?.error_message) {
+        parts.push(String(detail.error_message).trim());
+    }
+
+    copyLogText(parts.join('\n\n'), 'response');
 }
 
 function requestDelete(w) {
@@ -319,9 +578,13 @@ async function confirmRemoveWebhook(w) {
     try {
         await axios.delete(`/integracoes/webhooks/${w.id}`);
         emit('saved');
+        if (logsWebhook.value?.id === w.id) {
+            logsWebhook.value = null;
+        }
         if (editingWebhook.value?.id === w.id) {
             resetForm();
         }
+        await fetchDashboard();
     } catch (err) {
         errorMessage.value =
             err.response?.data?.message || 'Erro ao excluir webhook.';
@@ -355,17 +618,44 @@ function truncateUrl(url, max = 40) {
                 @click="close"
             />
             <aside
-                class="relative flex h-full w-full max-w-lg flex-col rounded-l-2xl bg-white shadow-2xl dark:bg-zinc-900"
+                class="relative flex h-full w-full max-w-4xl flex-col rounded-l-2xl bg-white shadow-2xl dark:bg-zinc-900"
             >
                 <div
-                    class="flex items-center justify-between rounded-tl-2xl bg-zinc-50/80 px-5 py-4 dark:bg-zinc-800/50"
+                    class="flex items-center justify-between gap-3 rounded-tl-2xl bg-zinc-50/80 px-5 py-4 dark:bg-zinc-800/50"
                 >
-                    <h2 class="text-lg font-semibold text-zinc-900 dark:text-white">
-                        Webhooks
-                    </h2>
+                    <div class="flex min-w-0 items-center gap-2">
+                        <button
+                            v-if="currentView !== 'hub'"
+                            type="button"
+                            class="shrink-0 rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:hover:bg-zinc-700"
+                            title="Voltar"
+                            @click="currentView === 'logs' ? backToHub() : cancelEdit()"
+                        >
+                            <ArrowLeft class="h-5 w-5" />
+                        </button>
+                        <div class="min-w-0">
+                            <h2 class="truncate text-lg font-semibold text-zinc-900 dark:text-white">
+                                {{ headerTitle }}
+                            </h2>
+                            <p
+                                v-if="currentView === 'hub'"
+                                class="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400"
+                            >
+                                <Clock class="h-3 w-3" />
+                                Dados das últimas 24 horas
+                            </p>
+                            <p
+                                v-else-if="currentView === 'logs' && logsWebhook"
+                                class="truncate text-xs text-zinc-500 dark:text-zinc-400"
+                                :title="logsWebhook.url"
+                            >
+                                {{ truncateUrl(logsWebhook.url, 56) }}
+                            </p>
+                        </div>
+                    </div>
                     <button
                         type="button"
-                        class="rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
+                        class="shrink-0 rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
                         aria-label="Fechar"
                         @click="close"
                     >
@@ -374,80 +664,87 @@ function truncateUrl(url, max = 40) {
                 </div>
 
                 <div class="flex flex-1 flex-col overflow-y-auto">
-                    <!-- Lista de webhooks (visível quando não está criando/editando) -->
-                    <template v-if="!showingForm">
-                        <div class="space-y-3 p-4">
-                            <p class="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-                                O corpo inclui <code class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">order</code>,
-                                <code class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">product</code>,
-                                <code class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">offer</code>,
-                                <code class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">payment</code> e
-                                <code class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">tracking</code>.
-                                Em <code class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">customer</code> só hashes SHA-256
-                                (<code class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">email_hash</code>,
-                                <code class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">phone_hash</code>, etc.) — compatível com Meta/LGPD; sem e-mail ou CPF em texto claro.
+                    <!-- Hub: dashboard + lista -->
+                    <template v-if="currentView === 'hub'">
+                        <div class="space-y-4 p-4">
+                            <p class="text-sm text-zinc-600 dark:text-zinc-400">
+                                Envie eventos da plataforma para a URL configurada. O POST inclui
+                                <code class="rounded bg-zinc-100 px-1 text-xs dark:bg-zinc-800">event</code>,
+                                <code class="rounded bg-zinc-100 px-1 text-xs dark:bg-zinc-800">payload</code>
+                                (pedido, produto, oferta, cliente em texto claro) e
+                                <code class="rounded bg-zinc-100 px-1 text-xs dark:bg-zinc-800">timestamp</code>.
                             </p>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                class="w-full"
-                                @click="startNew"
-                            >
-                                <Plus class="mr-2 h-4 w-4" />
-                                Novo webhook
-                            </Button>
+
+                            <WebhookKpiStrip
+                                :summary="dashboardData?.summary || {}"
+                                :sparkline="dashboardData?.sparkline || {}"
+                                :loading="loadingDashboard"
+                            />
+
+                            <div class="flex flex-wrap gap-2">
+                                <Button class="bg-emerald-600 hover:bg-emerald-700" @click="startNew">
+                                    <Plus class="mr-2 h-4 w-4" />
+                                    Novo webhook
+                                </Button>
+                                <Button variant="outline" @click="openPayloadDocs">
+                                    <BookOpen class="mr-2 h-4 w-4" />
+                                    Ver payloads
+                                </Button>
+                            </div>
                         </div>
 
                         <div class="flex-1 px-4 pb-6">
                             <h3 class="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                                Webhooks configurados
+                                Meus webhooks ({{ webhooks.length }})
                             </h3>
                             <ul v-if="webhooks.length > 0" class="space-y-3">
                                 <li
                                     v-for="w in webhooks"
                                     :key="w.id"
-                                    class="rounded-2xl bg-zinc-50 shadow-sm transition-shadow hover:shadow dark:bg-zinc-800/60 dark:hover:shadow-zinc-900/50"
+                                    class="rounded-2xl border border-zinc-200/80 bg-zinc-50/80 shadow-sm transition-shadow hover:shadow dark:border-zinc-700/60 dark:bg-zinc-800/60"
                                 >
-                                    <div class="flex items-center justify-between gap-2 px-4 py-3">
-                                        <button
-                                            type="button"
-                                            class="min-w-0 flex-1 text-left"
-                                            @click="editWebhook(w)"
-                                        >
-                                            <div class="font-medium text-zinc-900 dark:text-white">
-                                                {{ w.name }}
+                                    <div class="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                                        <div class="min-w-0 flex-1">
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span class="font-medium text-zinc-900 dark:text-white">
+                                                    {{ w.name }}
+                                                </span>
+                                                <span
+                                                    class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
+                                                    :class="
+                                                        w.is_active
+                                                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                                                    "
+                                                >
+                                                    {{ w.is_active ? 'Ativo' : 'Inativo' }}
+                                                </span>
                                             </div>
                                             <div
-                                                class="truncate text-xs text-zinc-500 dark:text-zinc-400"
+                                                class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400"
                                                 :title="w.url"
                                             >
-                                                {{ truncateUrl(w.url) }}
+                                                {{ truncateUrl(w.url, 52) }}
                                             </div>
-                                            <div
-                                                class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400"
-                                            >
-                                                {{ (w.events || []).length }} evento(s)
-                                                <span v-if="(w.products || []).length > 0" class="ml-1">
-                                                    • {{ (w.products || []).length }} produto(s)
+                                            <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
+                                                <span>{{ formatRelativeTime(statsForWebhook(w).last_sent_at) }}</span>
+                                                <span>
+                                                    Taxa de sucesso:
+                                                    <strong
+                                                        :class="
+                                                            statsForWebhook(w).success_rate >= 80
+                                                                ? 'text-emerald-600 dark:text-emerald-400'
+                                                                : statsForWebhook(w).sent > 0
+                                                                  ? 'text-red-600 dark:text-red-400'
+                                                                  : ''
+                                                        "
+                                                    >{{ statsForWebhook(w).success_rate }}%</strong>
+                                                    ({{ statsForWebhook(w).sent }} envios)
                                                 </span>
-                                                <span v-else class="ml-1 text-zinc-400">
-                                                    • Todos os produtos
-                                                </span>
-                                                <span
-                                                    v-if="w.has_bearer_token"
-                                                    class="ml-1 rounded-md bg-zinc-200 px-1.5 py-0.5 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"
-                                                >
-                                                    Token
-                                                </span>
-                                                <span
-                                                    v-if="!w.is_active"
-                                                    class="ml-1 rounded-md bg-amber-100 px-1.5 py-0.5 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                                                >
-                                                    Inativo
-                                                </span>
+                                                <span>{{ (w.events || []).length }} evento(s)</span>
                                             </div>
-                                        </button>
-                                        <div class="flex shrink-0 items-center gap-0.5">
+                                        </div>
+                                        <div class="flex shrink-0 flex-wrap items-center gap-1">
                                             <template v-if="confirmingDeleteId === w.id">
                                                 <span class="mr-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">Excluir?</span>
                                                 <button
@@ -471,7 +768,14 @@ function truncateUrl(url, max = 40) {
                                             <template v-else>
                                                 <button
                                                     type="button"
-                                                    class="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-zinc-500 hover:bg-emerald-100 hover:text-emerald-600 dark:hover:bg-emerald-900/30 dark:hover:text-emerald-400"
+                                                    class="rounded-lg px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-200/80 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                                                    @click.stop="openLogsView(w)"
+                                                >
+                                                    Ver logs
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
                                                     title="Disparar evento de teste"
                                                     :disabled="testing === w.id"
                                                     @click.stop="openTestModal(w)"
@@ -481,24 +785,15 @@ function truncateUrl(url, max = 40) {
                                                         class="h-3.5 w-3.5 animate-spin"
                                                     />
                                                     <Send v-else class="h-3.5 w-3.5" />
-                                                    {{ testing === w.id ? 'Enviando...' : 'Testar' }}
+                                                    Testar
                                                 </button>
                                                 <button
                                                     type="button"
-                                                    class="rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
-                                                    title="Logs"
-                                                    :class="{ 'bg-zinc-200/80 dark:bg-zinc-700': expandedLogsWebhookId === w.id }"
-                                                    @click.stop="toggleLogs(w)"
-                                                >
-                                                    <FileText class="h-4 w-4" />
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    class="rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
-                                                    title="Editar"
+                                                    class="rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:hover:bg-zinc-700"
+                                                    title="Configurar"
                                                     @click.stop="editWebhook(w)"
                                                 >
-                                                    <Pencil class="h-4 w-4" />
+                                                    <Settings class="h-4 w-4" />
                                                 </button>
                                                 <button
                                                     type="button"
@@ -511,66 +806,6 @@ function truncateUrl(url, max = 40) {
                                                 </button>
                                             </template>
                                         </div>
-                                    </div>
-                                    <div
-                                        v-if="expandedLogsWebhookId === w.id"
-                                        class="bg-white/60 px-4 py-3 dark:bg-zinc-900/40"
-                                    >
-                                        <div class="mb-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                                            Últimos envios
-                                        </div>
-                                        <div
-                                            v-if="loadingLogs === w.id"
-                                            class="flex items-center gap-2 py-4 text-sm text-zinc-500"
-                                        >
-                                            <Loader2 class="h-4 w-4 animate-spin" />
-                                            Carregando...
-                                        </div>
-                                        <ul
-                                            v-else-if="(logsByWebhookId[w.id] || []).length > 0"
-                                            class="max-h-48 space-y-1.5 overflow-y-auto text-xs"
-                                        >
-                                            <li
-                                                v-for="log in logsByWebhookId[w.id]"
-                                                :key="log.id"
-                                                class="flex cursor-pointer flex-wrap items-center justify-between gap-x-2 gap-y-0.5 rounded-xl bg-white/80 px-3 py-2 transition hover:bg-zinc-100 dark:bg-zinc-800/80 dark:hover:bg-zinc-700/80"
-                                                role="button"
-                                                tabindex="0"
-                                                @click="openLogDetail(w.id, log.id)"
-                                                @keydown.enter="openLogDetail(w.id, log.id)"
-                                            >
-                                                <span class="font-medium text-zinc-700 dark:text-zinc-300">
-                                                    {{ log.event_label || log.event }}
-                                                </span>
-                                                <span
-                                                    :class="[
-                                                        'rounded px-1.5 py-0.5 text-[10px] font-medium',
-                                                        log.success
-                                                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                                                            : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
-                                                    ]"
-                                                >
-                                                    {{ log.success ? (log.response_status || 'OK') : (log.response_status || 'Erro') }}
-                                                </span>
-                                                <span class="w-full text-zinc-500 dark:text-zinc-400">
-                                                    {{ formatLogDate(log.created_at) }}
-                                                    <span v-if="log.source === 'test'" class="ml-1">(teste)</span>
-                                                </span>
-                                                <p
-                                                    v-if="log.error_message"
-                                                    class="w-full truncate text-red-600 dark:text-red-400"
-                                                    :title="log.error_message"
-                                                >
-                                                    {{ log.error_message }}
-                                                </p>
-                                            </li>
-                                        </ul>
-                                        <p
-                                            v-else
-                                            class="py-3 text-center text-xs text-zinc-500 dark:text-zinc-400"
-                                        >
-                                            Nenhum envio registrado.
-                                        </p>
                                     </div>
                                 </li>
                             </ul>
@@ -595,25 +830,107 @@ function truncateUrl(url, max = 40) {
                         </div>
                     </template>
 
-                    <!-- Formulário (só ao criar ou editar) -->
+                    <!-- Logs de um webhook -->
+                    <template v-else-if="currentView === 'logs' && logsWebhook">
+                        <div class="space-y-4 p-4">
+                            <div
+                                v-if="statsForWebhook(logsWebhook).sent > 0"
+                                class="grid grid-cols-3 gap-2 text-center text-xs"
+                            >
+                                <div class="rounded-xl bg-zinc-100 px-2 py-2 dark:bg-zinc-800">
+                                    <p class="font-bold text-zinc-900 dark:text-white">{{ statsForWebhook(logsWebhook).sent }}</p>
+                                    <p class="text-zinc-500">Enviados</p>
+                                </div>
+                                <div class="rounded-xl bg-emerald-50 px-2 py-2 dark:bg-emerald-900/20">
+                                    <p class="font-bold text-emerald-700 dark:text-emerald-300">{{ statsForWebhook(logsWebhook).delivered }}</p>
+                                    <p class="text-zinc-500">OK</p>
+                                </div>
+                                <div class="rounded-xl bg-red-50 px-2 py-2 dark:bg-red-900/20">
+                                    <p class="font-bold text-red-700 dark:text-red-300">{{ statsForWebhook(logsWebhook).failed }}</p>
+                                    <p class="text-zinc-500">Falhas</p>
+                                </div>
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                                <select
+                                    v-model="logFilterStatus"
+                                    class="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+                                >
+                                    <option value="all">Todos</option>
+                                    <option value="success">Sucesso</option>
+                                    <option value="failed">Falha</option>
+                                </select>
+                                <input
+                                    v-model="logSearchQuery"
+                                    type="search"
+                                    placeholder="Buscar evento..."
+                                    class="min-w-[140px] flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+                                />
+                            </div>
+                        </div>
+                        <div class="flex-1 px-4 pb-6">
+                            <div
+                                v-if="loadingLogs === logsWebhook.id"
+                                class="flex items-center justify-center gap-2 py-12 text-sm text-zinc-500"
+                            >
+                                <Loader2 class="h-5 w-5 animate-spin" />
+                                Carregando logs...
+                            </div>
+                            <div
+                                v-else-if="filteredLogs.length === 0"
+                                class="rounded-2xl border border-dashed border-zinc-300 py-12 text-center text-sm text-zinc-500 dark:border-zinc-600"
+                            >
+                                Nenhum registro encontrado.
+                            </div>
+                            <div v-else class="overflow-hidden rounded-2xl border border-zinc-200 dark:border-zinc-700">
+                                <table class="w-full text-left text-xs">
+                                    <thead class="bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                                        <tr>
+                                            <th class="px-3 py-2 font-medium">Horário</th>
+                                            <th class="px-3 py-2 font-medium">Evento</th>
+                                            <th class="px-3 py-2 font-medium">Status</th>
+                                            <th class="px-3 py-2 font-medium">Origem</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr
+                                            v-for="log in filteredLogs"
+                                            :key="log.id"
+                                            class="cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/80"
+                                            @click="openLogDetail(logsWebhook.id, log.id)"
+                                        >
+                                            <td class="whitespace-nowrap px-3 py-2.5 text-zinc-600 dark:text-zinc-400">
+                                                {{ formatLogDate(log.created_at) }}
+                                            </td>
+                                            <td class="px-3 py-2.5 font-medium text-zinc-800 dark:text-zinc-200">
+                                                {{ log.event_label || log.event }}
+                                            </td>
+                                            <td class="px-3 py-2.5">
+                                                <span
+                                                    class="rounded px-1.5 py-0.5 font-medium"
+                                                    :class="
+                                                        log.success
+                                                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                                            : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                                                    "
+                                                >
+                                                    {{ log.success ? (log.response_status || 'OK') : (log.response_status || 'Erro') }}
+                                                </span>
+                                            </td>
+                                            <td class="px-3 py-2.5 text-zinc-500">
+                                                {{ log.source === 'test' ? 'Teste' : 'Automático' }}
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Formulário (criar/editar) -->
                     <div
-                        v-else
+                        v-else-if="currentView === 'form'"
                         class="flex flex-1 flex-col bg-zinc-50/50 p-4 dark:bg-zinc-800/30"
                     >
-                        <div class="mb-4 flex items-center gap-2">
-                            <button
-                                type="button"
-                                class="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-                                title="Voltar à lista"
-                                @click="cancelEdit"
-                            >
-                                <ArrowLeft class="h-5 w-5" />
-                            </button>
-                            <h3 class="text-sm font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
-                                {{ editingWebhook ? 'Editar webhook' : 'Novo webhook' }}
-                            </h3>
-                        </div>
-
                         <div class="space-y-4">
                             <div>
                                 <label
@@ -865,13 +1182,21 @@ function truncateUrl(url, max = 40) {
                                             </span>
                                             <button
                                                 type="button"
-                                                class="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-600 dark:hover:text-zinc-300"
-                                                @click="copyToClipboard(selectedLogDetail.request_payload, 'Payload')"
+                                                class="rounded px-2 py-1 text-xs font-medium transition"
+                                                :class="
+                                                    logCopyFeedback === 'payload'
+                                                        ? 'text-emerald-600 dark:text-emerald-400'
+                                                        : 'text-zinc-500 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-600 dark:hover:text-zinc-300'
+                                                "
+                                                @click.stop="copyLogRequest"
                                             >
-                                                Copiar
+                                                {{ logCopyFeedback === 'payload' ? 'Copiado!' : 'Copiar' }}
                                             </button>
                                         </div>
-                                        <pre class="max-h-64 overflow-auto rounded-xl bg-zinc-50 p-4 text-xs leading-relaxed text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">{{ formatPayload(selectedLogDetail.request_payload) }}</pre>
+                                        <pre
+                                            ref="logRequestPreRef"
+                                            class="max-h-64 overflow-auto rounded-xl bg-zinc-50 p-4 text-xs leading-relaxed text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
+                                        >{{ formatPayload(selectedLogDetail.request_payload) }}</pre>
                                     </div>
                                     <div>
                                         <div class="mb-1 flex items-center justify-between">
@@ -880,16 +1205,24 @@ function truncateUrl(url, max = 40) {
                                             </span>
                                             <button
                                                 type="button"
-                                                class="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-600 dark:hover:text-zinc-300"
-                                                @click="copyToClipboard(selectedLogDetail.response_body, 'Resposta')"
+                                                class="rounded px-2 py-1 text-xs font-medium transition"
+                                                :class="
+                                                    logCopyFeedback === 'response'
+                                                        ? 'text-emerald-600 dark:text-emerald-400'
+                                                        : 'text-zinc-500 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-600 dark:hover:text-zinc-300'
+                                                "
+                                                @click.stop="copyLogResponse"
                                             >
-                                                Copiar
+                                                {{ logCopyFeedback === 'response' ? 'Copiado!' : 'Copiar' }}
                                             </button>
                                         </div>
                                         <p v-if="selectedLogDetail.response_status != null" class="mb-1 text-xs text-zinc-600 dark:text-zinc-400">
                                             Status: {{ selectedLogDetail.response_status }}
                                         </p>
-                                        <pre class="max-h-64 overflow-auto rounded-xl bg-zinc-50 p-4 text-xs leading-relaxed text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">{{ formatPayload(selectedLogDetail.response_body) }}</pre>
+                                        <pre
+                                            ref="logResponsePreRef"
+                                            class="max-h-64 overflow-auto rounded-xl bg-zinc-50 p-4 text-xs leading-relaxed text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
+                                        >{{ formatPayload(selectedLogDetail.response_body) }}</pre>
                                     </div>
                                 </div>
                             </template>
@@ -902,6 +1235,13 @@ function truncateUrl(url, max = 40) {
                     </div>
                 </div>
             </aside>
+
+            <WebhookPayloadDocsModal
+                :open="showPayloadDocsModal"
+                :catalog="webhookEventCatalog"
+                @close="showPayloadDocsModal = false"
+                @send-test="onPayloadDocsSendTest"
+            />
         </div>
     </Teleport>
 </template>

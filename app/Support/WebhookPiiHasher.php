@@ -3,20 +3,73 @@
 namespace App\Support;
 
 /**
- * Normalização SHA-256 de PII para webhooks de integração (LGPD + plataformas como Meta).
- *
- * Algoritmo alinhado ao Conversions API (e-mail minúsculo, telefone só dígitos com DDI 55, documento só dígitos).
- * Não envie estes valores em texto claro para URLs de terceiros.
+ * Customer payload e hashes SHA-256 para webhooks de integração (CRM + Meta CAPI).
  */
 class WebhookPiiHasher
 {
     public static function includesPlainCustomerPii(): bool
     {
-        return (bool) config('getfy.webhooks.include_plain_customer_pii', false);
+        return (bool) config('getfy.webhooks.include_plain_customer_pii', true);
+    }
+
+    public static function includesCustomerHashes(): bool
+    {
+        return (bool) config('getfy.webhooks.include_customer_hashes', false);
     }
 
     /**
-     * @return array<string, string>
+     * Customer para webhooks de integração (CRM/Zapier): sempre em texto claro, estilo Cakto.
+     *
+     * @return array<string, mixed>
+     */
+    public static function integrationCustomerPayload(
+        ?string $email,
+        ?string $phone,
+        ?string $document,
+        ?string $name,
+    ): array {
+        $out = self::plainCustomerFields($email, $phone, $document, $name);
+
+        if (! self::includesCustomerHashes()) {
+            return $out;
+        }
+
+        $emailHash = self::hashEmail($email);
+        if ($emailHash !== null) {
+            $out['email_hash'] = $emailHash;
+        }
+        $phoneHash = self::hashPhone($phone);
+        if ($phoneHash !== null) {
+            $out['phone_hash'] = $phoneHash;
+        }
+        $docHash = self::hashDocument($document);
+        if ($docHash !== null) {
+            $out['cpf_hash'] = $docHash;
+        }
+        $nameHash = self::hashName($name);
+        if ($nameHash !== null) {
+            $out['name_hash'] = $nameHash;
+        }
+
+        return $out;
+    }
+
+    /**
+     * @deprecated Use integrationCustomerPayload() para webhooks HTTP de integração.
+     *
+     * @return array<string, mixed>
+     */
+    public static function customerPayload(
+        ?string $email,
+        ?string $phone,
+        ?string $document,
+        ?string $name,
+    ): array {
+        return self::integrationCustomerPayload($email, $phone, $document, $name);
+    }
+
+    /**
+     * @return array<string, mixed>
      */
     public static function customerIdentifiers(
         ?string $email,
@@ -24,44 +77,57 @@ class WebhookPiiHasher
         ?string $document,
         ?string $name,
     ): array {
+        return self::integrationCustomerPayload($email, $phone, $document, $name);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function plainCustomerFields(
+        ?string $email,
+        ?string $phone,
+        ?string $document,
+        ?string $name,
+    ): array {
         $out = [];
 
-        $emailHash = self::hashEmail($email);
-        if ($emailHash !== null) {
-            $out['email_hash'] = $emailHash;
+        if (is_string($name) && trim($name) !== '') {
+            $out['name'] = trim($name);
+        }
+        if (is_string($email) && trim($email) !== '') {
+            $out['email'] = trim($email);
         }
 
-        $phoneHash = self::hashPhone($phone);
-        if ($phoneHash !== null) {
-            $out['phone_hash'] = $phoneHash;
+        $phoneDigits = self::normalizePhoneDigits($phone);
+        if ($phoneDigits !== null) {
+            $out['phone'] = $phoneDigits;
         }
 
-        $docHash = self::hashDocument($document);
-        if ($docHash !== null) {
-            $out['cpf_hash'] = $docHash;
+        $docDigits = preg_replace('/\D/', '', (string) $document);
+        if ($docDigits !== '' && strlen($docDigits) >= 11) {
+            $out['docNumber'] = $docDigits;
+            $out['docType'] = strlen($docDigits) === 14 ? 'cnpj' : 'cpf';
         }
 
-        $nameHash = self::hashName($name);
-        if ($nameHash !== null) {
-            $out['name_hash'] = $nameHash;
-        }
-
-        if (self::includesPlainCustomerPii()) {
-            if (is_string($email) && trim($email) !== '') {
-                $out['email'] = trim($email);
-            }
-            if (is_string($phone) && trim($phone) !== '') {
-                $out['phone'] = trim($phone);
-            }
-            if (is_string($document) && trim($document) !== '') {
-                $out['cpf'] = trim($document);
-            }
-            if (is_string($name) && trim($name) !== '') {
-                $out['name'] = trim($name);
-            }
-        }
+        $out['birthDate'] = null;
 
         return $out;
+    }
+
+    public static function normalizePhoneDigits(?string $phone): ?string
+    {
+        if ($phone === null || trim($phone) === '') {
+            return null;
+        }
+        $digits = preg_replace('/\D/', '', $phone);
+        if ($digits === '' || strlen($digits) < 10) {
+            return null;
+        }
+        if (! str_starts_with($digits, '55')) {
+            $digits = '55'.$digits;
+        }
+
+        return $digits;
     }
 
     public static function hashEmail(?string $email): ?string
@@ -75,15 +141,9 @@ class WebhookPiiHasher
 
     public static function hashPhone(?string $phone): ?string
     {
-        if ($phone === null || trim($phone) === '') {
+        $digits = self::normalizePhoneDigits($phone);
+        if ($digits === null) {
             return null;
-        }
-        $digits = preg_replace('/\D/', '', $phone);
-        if ($digits === '' || strlen($digits) < 10) {
-            return null;
-        }
-        if (! str_starts_with($digits, '55')) {
-            $digits = '55'.$digits;
         }
 
         return hash('sha256', $digits);
