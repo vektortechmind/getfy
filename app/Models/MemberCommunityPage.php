@@ -9,7 +9,7 @@ use Illuminate\Support\Str;
 
 class MemberCommunityPage extends Model
 {
-    protected $fillable = ['product_id', 'title', 'icon', 'slug', 'banner', 'position', 'is_public_posting', 'is_default'];
+    protected $fillable = ['product_id', 'title', 'icon', 'slug', 'banner', 'position', 'is_public_posting', 'is_default', 'is_featured'];
 
     protected function casts(): array
     {
@@ -17,6 +17,7 @@ class MemberCommunityPage extends Model
             'position' => 'integer',
             'is_public_posting' => 'boolean',
             'is_default' => 'boolean',
+            'is_featured' => 'boolean',
         ];
     }
 

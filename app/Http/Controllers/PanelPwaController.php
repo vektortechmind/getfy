@@ -148,6 +148,13 @@ class PanelPwaController extends Controller
             ]
         );
 
+        $this->pruneStalePanelSubscriptions(
+            $user->id,
+            $user->tenant_id,
+            $validated['endpoint'],
+            $request->userAgent()
+        );
+
         return response()->json([
             'success' => true,
             'subscribed' => true,
@@ -195,5 +202,23 @@ class PanelPwaController extends Controller
         }
 
         return $key;
+    }
+
+    /**
+     * Remove inscrições antigas do mesmo navegador/dispositivo após renovação do push (deploy PWA).
+     */
+    private function pruneStalePanelSubscriptions(int $userId, ?int $tenantId, string $keepEndpoint, ?string $userAgent): void
+    {
+        $userAgent = is_string($userAgent) ? trim($userAgent) : '';
+        if ($userAgent === '') {
+            return;
+        }
+
+        PanelPushSubscription::query()
+            ->where('user_id', $userId)
+            ->where('tenant_id', $tenantId)
+            ->where('user_agent', $userAgent)
+            ->where('endpoint', '!=', $keepEndpoint)
+            ->delete();
     }
 }

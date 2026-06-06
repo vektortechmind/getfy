@@ -75,7 +75,7 @@ Route::get('/', function (\Illuminate\Http\Request $request) {
             return redirect('/dashboard');
         }
 
-        return redirect('/area-membros');
+        return redirect('/meus-produtos');
     }
 
     return redirect()->to('/login', 302);
@@ -103,6 +103,9 @@ Route::middleware('throttle:60,1')->group(function () {
     Route::post('/webhooks/gateways/asaas', [\App\Http\Controllers\Webhooks\AsaasWebhookController::class, 'handle'])->name('webhooks.asaas');
     Route::post('/webhooks/gateways/pagarme', [\App\Http\Controllers\Webhooks\PagarmeWebhookController::class, 'handle'])->name('webhooks.pagarme');
     Route::post('/webhooks/gateways/cajupay', [\App\Http\Controllers\Webhooks\CajuPayWebhookController::class, 'handle'])->name('webhooks.cajupay');
+    Route::post('/webhooks/inbound/{token}', [\App\Http\Controllers\Webhooks\InboundCheckoutWebhookController::class, 'handle'])
+        ->where('token', '[a-fA-F0-9]{64}')
+        ->name('webhook-entrada.inbound.post');
     // Dispatcher genérico para gateways de plugins (webhook_handler na definição do gateway)
     Route::post('/webhooks/gateways/{slug}', \App\Http\Controllers\Webhooks\GenericGatewayWebhookController::class)
         ->where('slug', '[a-z0-9_-]+')
@@ -484,6 +487,7 @@ Route::middleware(['auth', 'admin.tenant', 'role:admin|infoprodutor|team', 'audi
         Route::post('/produtos/{produto}/member-builder/sections', [\App\Http\Controllers\MemberBuilderController::class, 'storeSection'])->name('member-builder.sections.store');
         Route::put('/produtos/{produto}/member-builder/sections/{section}', [\App\Http\Controllers\MemberBuilderController::class, 'updateSection'])->name('member-builder.sections.update');
         Route::delete('/produtos/{produto}/member-builder/sections/{section}', [\App\Http\Controllers\MemberBuilderController::class, 'destroySection'])->name('member-builder.sections.destroy');
+        Route::post('/produtos/{produto}/member-builder/reorder', [\App\Http\Controllers\MemberBuilderController::class, 'reorder'])->name('member-builder.reorder');
         Route::post('/produtos/{produto}/member-builder/sections/{section}/modules', [\App\Http\Controllers\MemberBuilderController::class, 'storeModule'])->name('member-builder.modules.store');
         Route::put('/produtos/{produto}/member-builder/modules/{module}', [\App\Http\Controllers\MemberBuilderController::class, 'updateModule'])->name('member-builder.modules.update');
         Route::delete('/produtos/{produto}/member-builder/modules/{module}', [\App\Http\Controllers\MemberBuilderController::class, 'destroyModule'])->name('member-builder.modules.destroy');
@@ -614,6 +618,23 @@ Route::middleware(['auth', 'admin.tenant', 'role:admin|infoprodutor|team', 'audi
         Route::post('/integracoes/webhooks/{webhook}/test', [\App\Http\Controllers\WebhookController::class, 'test'])->name('integrations.webhooks.test');
         Route::get('/integracoes/webhooks/{webhook}/logs', [\App\Http\Controllers\WebhookController::class, 'logs'])->name('integrations.webhooks.logs');
         Route::get('/integracoes/webhooks/{webhook}/logs/{log}', [\App\Http\Controllers\WebhookController::class, 'showLog'])->name('integrations.webhooks.logs.show');
+        Route::get('/integracoes/checkout-externo/products', [\App\Http\Controllers\Integrations\ExternalCheckoutController::class, 'products'])->name('integrations.checkout-externo.products');
+        Route::get('/integracoes/checkout-externo/endpoints', [\App\Http\Controllers\Integrations\ExternalCheckoutController::class, 'index'])->name('integrations.checkout-externo.endpoints.index');
+        Route::post('/integracoes/checkout-externo/endpoints', [\App\Http\Controllers\Integrations\ExternalCheckoutController::class, 'store'])
+            ->middleware('throttle:60,1')
+            ->name('integrations.checkout-externo.endpoints.store');
+        Route::put('/integracoes/checkout-externo/endpoints/{endpoint}', [\App\Http\Controllers\Integrations\ExternalCheckoutController::class, 'update'])
+            ->whereNumber('endpoint')
+            ->middleware('throttle:60,1')
+            ->name('integrations.checkout-externo.endpoints.update');
+        Route::delete('/integracoes/checkout-externo/endpoints/{endpoint}', [\App\Http\Controllers\Integrations\ExternalCheckoutController::class, 'destroy'])
+            ->whereNumber('endpoint')
+            ->middleware('throttle:30,1')
+            ->name('integrations.checkout-externo.endpoints.destroy');
+        Route::post('/integracoes/checkout-externo/endpoints/{endpoint}/regenerate-token', [\App\Http\Controllers\Integrations\ExternalCheckoutController::class, 'regenerateToken'])
+            ->whereNumber('endpoint')
+            ->middleware('throttle:20,1')
+            ->name('integrations.checkout-externo.endpoints.regenerate-token');
     });
 
     // E-mail Marketing
@@ -653,7 +674,15 @@ Route::middleware(['auth', 'admin.tenant', 'partner.panel'])->prefix('parceiro')
 });
 
 Route::middleware(['auth', 'role:aluno'])->group(function () {
-    Route::get('/area-membros', [\App\Http\Controllers\MemberAreaController::class, 'index'])->name('member-area.index');
+    Route::get('/meus-produtos', [\App\Http\Controllers\MemberAreaController::class, 'index'])->name('student-area.index');
+    Route::get('/meus-produtos/produtos/{product}/acessar', [\App\Http\Controllers\StudentProductAccessController::class, 'access'])
+        ->name('student-area.product.access');
+    Route::get('/meus-produtos/produtos/{product}/reembolso/eligibility', [\App\Http\Controllers\StudentAreaRefundController::class, 'eligibility'])
+        ->name('student-area.refund.eligibility');
+    Route::post('/meus-produtos/produtos/{product}/reembolso', [\App\Http\Controllers\StudentAreaRefundController::class, 'store'])
+        ->middleware('throttle:10,1')
+        ->name('student-area.refund.store');
+    Route::redirect('/area-membros', '/meus-produtos', 302)->name('member-area.index');
 });
 
 // Área de membros por produto (path: /m/{slug})
@@ -697,6 +726,7 @@ Route::prefix('m/{slug}')->where(['slug' => '[a-zA-Z0-9\-]{3,64}'])->middleware(
         Route::get('aula/{lesson}/pdf-annotations', [\App\Http\Controllers\MemberAreaAppController::class, 'getLessonPdfAnnotations'])->name('member-area-app.lesson.pdf-annotations');
         Route::put('aula/{lesson}/pdf-annotations', [\App\Http\Controllers\MemberAreaAppController::class, 'putLessonPdfAnnotations'])->middleware('throttle:120,1')->name('member-area-app.lesson.pdf-annotations.put');
         Route::post('aula/{lesson}/like', [\App\Http\Controllers\MemberAreaAppController::class, 'toggleLessonLike'])->middleware('throttle:60,1')->name('member-area-app.lesson.like');
+        Route::put('aula/{lesson}/notes', [\App\Http\Controllers\MemberAreaAppController::class, 'putLessonNote'])->middleware('throttle:60,1')->name('member-area-app.lesson.notes.put');
         Route::post('aula/{lesson}/complete', [\App\Http\Controllers\MemberAreaAppController::class, 'completeLesson'])->name('member-area-app.lesson.complete');
         Route::post('aula/{lesson}/comments', [\App\Http\Controllers\MemberAreaAppController::class, 'storeLessonComment'])->name('member-area-app.lesson.comments.store');
         Route::get('loja', [\App\Http\Controllers\MemberAreaAppController::class, 'loja'])->name('member-area-app.loja');
@@ -770,6 +800,7 @@ Route::middleware(['web', 'member.area.resolve.by.host'])->group(function () {
         Route::get('aula/{lesson}/pdf-annotations', [\App\Http\Controllers\MemberAreaAppController::class, 'getLessonPdfAnnotations'])->name('member-area-app.lesson.pdf-annotations.host');
         Route::put('aula/{lesson}/pdf-annotations', [\App\Http\Controllers\MemberAreaAppController::class, 'putLessonPdfAnnotations'])->middleware('throttle:120,1')->name('member-area-app.lesson.pdf-annotations.put.host');
         Route::post('aula/{lesson}/like', [\App\Http\Controllers\MemberAreaAppController::class, 'toggleLessonLike'])->middleware('throttle:60,1')->name('member-area-app.lesson.like.host');
+        Route::put('aula/{lesson}/notes', [\App\Http\Controllers\MemberAreaAppController::class, 'putLessonNote'])->middleware('throttle:60,1')->name('member-area-app.lesson.notes.put.host');
         Route::post('aula/{lesson}/complete', [\App\Http\Controllers\MemberAreaAppController::class, 'completeLesson'])->name('member-area-app.lesson.complete.host');
         Route::post('aula/{lesson}/comments', [\App\Http\Controllers\MemberAreaAppController::class, 'storeLessonComment'])->name('member-area-app.lesson.comments.store.host');
         Route::get('loja', [\App\Http\Controllers\MemberAreaAppController::class, 'loja'])->name('member-area-app.loja.host');

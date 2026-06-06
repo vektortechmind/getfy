@@ -494,19 +494,7 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                     URL da área
                                 </h3>
                                 <div class="space-y-4">
-                                    <div>
-                                        <label class="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Tipo de URL</label>
-                                        <select v-model="configForm.domain_type" :class="inputClass" class="w-full">
-                                            <option value="path">Slug</option>
-                                            <option value="custom">Domínio</option>
-                                        </select>
-                                    </div>
-                                    <div v-if="configForm.domain_type === 'path'">
-                                        <label class="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Segmento da URL</label>
-                                        <input v-model="configForm.domain_value" type="text" :class="inputClass" class="w-full" placeholder="Ex.: meucurso" maxlength="16" />
-                                        <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Vazio = {{ produto.checkout_slug }}</p>
-                                    </div>
-                                    <div v-else-if="configForm.domain_type === 'custom'">
+                                    <div v-if="configForm.domain_type === 'custom'">
                                         <label class="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Domínio ou subdomínio</label>
                                         <input v-model="configForm.domain_value" type="text" :class="inputClass" class="w-full" placeholder="membros.empresa.com ou area.empresa.com.br" />
                                         <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Ex.: membros.seudominio.com ou area.seudominio.com.br</p>
@@ -531,6 +519,11 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                             </ul>
                                             <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">Após propagar o DNS, salve e acesse o link abaixo para testar.</p>
                                         </div>
+                                    </div>
+                                    <div v-else>
+                                        <label class="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Segmento da URL</label>
+                                        <input v-model="configForm.domain_value" type="text" :class="inputClass" class="w-full" placeholder="Ex.: meucurso" maxlength="16" />
+                                        <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Vazio = {{ produto.checkout_slug }}</p>
                                     </div>
                                     <div class="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800">
                                         <p class="mb-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">Link completo</p>

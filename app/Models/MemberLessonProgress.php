@@ -9,7 +9,7 @@ class MemberLessonProgress extends Model
 {
     protected $table = 'member_lesson_progress';
 
-    protected $fillable = ['user_id', 'member_lesson_id', 'product_id', 'completed_at', 'progress_percent'];
+    protected $fillable = ['user_id', 'member_lesson_id', 'product_id', 'completed_at', 'progress_percent', 'notes'];
 
     protected function casts(): array
     {

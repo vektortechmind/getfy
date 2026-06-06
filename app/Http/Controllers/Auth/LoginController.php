@@ -104,7 +104,7 @@ class LoginController extends Controller
                 return redirect()->intended('/dashboard');
             }
 
-            return redirect()->intended('/area-membros');
+            return redirect()->intended('/meus-produtos');
         }
 
         return back()->withErrors([

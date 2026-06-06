@@ -46,6 +46,11 @@ class SafeRemoteUrl
             }
         }
 
+        // URLs públicas padrão do Cloudflare R2 (*.r2.dev)
+        if (str_ends_with($host, '.r2.dev')) {
+            return true;
+        }
+
         return false;
     }
 
@@ -67,6 +72,14 @@ class SafeRemoteUrl
         }
         if ($awsUrl !== '' && str_starts_with($awsUrl, 'http')) {
             $h = parse_url($awsUrl, PHP_URL_HOST);
+            if (is_string($h) && $h !== '') {
+                $hosts[] = strtolower($h);
+            }
+        }
+
+        $r2PublicUrl = (string) env('R2_PUBLIC_URL', '');
+        if ($r2PublicUrl !== '' && str_starts_with($r2PublicUrl, 'http')) {
+            $h = parse_url($r2PublicUrl, PHP_URL_HOST);
             if (is_string($h) && $h !== '') {
                 $hosts[] = strtolower($h);
             }

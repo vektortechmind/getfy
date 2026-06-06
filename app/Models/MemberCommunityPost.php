@@ -8,16 +8,26 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class MemberCommunityPost extends Model
 {
-    protected $fillable = ['member_community_page_id', 'user_id', 'content', 'image'];
+    protected $fillable = ['member_community_page_id', 'user_id', 'content', 'image', 'video', 'media_aspect'];
 
-    protected $appends = ['image_url'];
+    protected $appends = ['image_url', 'video_url'];
 
     public function getImageUrlAttribute(): ?string
     {
         if (empty($this->attributes['image'] ?? null)) {
             return null;
         }
+
         return app(StorageService::class)->url($this->attributes['image']);
+    }
+
+    public function getVideoUrlAttribute(): ?string
+    {
+        if (empty($this->attributes['video'] ?? null)) {
+            return null;
+        }
+
+        return app(StorageService::class)->url($this->attributes['video']);
     }
 
     public function page(): BelongsTo

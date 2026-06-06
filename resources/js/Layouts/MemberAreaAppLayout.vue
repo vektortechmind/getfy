@@ -4,7 +4,7 @@ import { Link, usePage, Head, router } from '@inertiajs/vue3';
 import PwaInstallPrompt from '@/components/member-area/PwaInstallPrompt.vue';
 import MemberAreaNotificationsPanel from '@/components/member-area/MemberAreaNotificationsPanel.vue';
 import Button from '@/components/ui/Button.vue';
-import { Bell, ChevronDown, User, X, Camera, Lock, CheckCircle, AlertCircle, Menu, Trophy, RotateCcw } from 'lucide-vue-next';
+import { Bell, ChevronDown, User, X, Camera, Lock, CheckCircle, AlertCircle, Menu, Trophy, RotateCcw, ShoppingCart } from 'lucide-vue-next';
 import { ensurePushSubscription, attachServiceWorkerPushListeners } from '@/lib/pushSubscription';
 
 const page = usePage();
@@ -101,6 +101,11 @@ const baseUrl = computed(() => {
     if (!window.location.pathname.startsWith('/m/')) return window.location.origin;
     return `${window.location.origin}${basePath.value}`;
 });
+const studentHubUrl = computed(() => {
+    const appUrl = String(props.value?.app_url ?? '').replace(/\/$/, '');
+    return appUrl ? `${appUrl}/meus-produtos` : '/meus-produtos';
+});
+const showStudentHubLink = computed(() => props.value?.show_student_hub_link === true);
 const accountBaseUrl = computed(() => String(baseUrl.value || '').replace(/\/$/, ''));
 /** Base path para API de notificações: /m/slug quando acesso por path, vazio quando por host. */
 const notificationsApiBasePath = computed(() => {
@@ -542,6 +547,14 @@ watch(
             :style="{ color: 'var(--ma-text)' }"
         >
             <div class="flex min-w-0 shrink items-center gap-4 md:gap-6">
+                <a
+                    v-if="showStudentHubLink"
+                    :href="studentHubUrl"
+                    class="hidden shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-sm font-medium text-white/80 drop-shadow hover:bg-white/10 sm:inline-flex"
+                    title="Ver todos os seus cursos"
+                >
+                    ← Meus produtos
+                </a>
                 <Link :href="basePath" class="flex shrink-0 items-center gap-4" @click="closeMobileMenu">
                     <img
                         v-if="headerLogo"
@@ -712,6 +725,15 @@ watch(
                             <User class="h-4 w-4" />
                             Minha conta
                         </button>
+                        <a
+                            :href="studentHubUrl"
+                            class="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                            role="menuitem"
+                            @click="accountMenuOpen = false"
+                        >
+                            <ShoppingCart class="h-4 w-4" />
+                            Meus pedidos
+                        </a>
                         <button
                             v-if="showRefundMenu"
                             type="button"
@@ -773,6 +795,14 @@ watch(
                         <X class="h-5 w-5" />
                     </button>
                     <nav class="flex flex-col gap-1 px-4 py-2">
+                        <a
+                            v-if="showStudentHubLink"
+                            :href="studentHubUrl"
+                            class="rounded-lg px-4 py-3 text-sm font-medium text-zinc-200 hover:bg-zinc-800 hover:text-white"
+                            @click="closeMobileMenu"
+                        >
+                            ← Meus produtos
+                        </a>
                         <template v-for="item in sidebarItems" :key="item.title">
                             <a
                                 v-if="item.open_external"
@@ -840,6 +870,14 @@ watch(
                                 <User class="h-4 w-4" />
                                 Minha conta
                             </button>
+                            <a
+                                :href="studentHubUrl"
+                                class="flex w-full items-center gap-2 rounded-lg px-4 py-3 text-left text-sm font-medium text-zinc-300 hover:bg-zinc-800"
+                                @click="closeMobileMenu()"
+                            >
+                                <ShoppingCart class="h-4 w-4" />
+                                Meus pedidos
+                            </a>
                             <button
                                 v-if="showRefundMenu"
                                 type="button"

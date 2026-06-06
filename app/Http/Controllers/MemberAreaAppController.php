@@ -24,6 +24,8 @@ use App\Services\MemberAreaResolver;
 use App\Services\MemberCommentService;
 use App\Services\MemberProgressService;
 use App\Services\StorageService;
+use App\Services\UserProductAccessService;
+use App\Support\MemberLessonPdfContentResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -39,7 +41,8 @@ class MemberAreaAppController extends Controller
     public function __construct(
         protected MemberProgressService $progressService,
         protected MemberAreaResolver $resolver,
-        protected GamificationService $gamificationService
+        protected GamificationService $gamificationService,
+        protected UserProductAccessService $accessService
     ) {}
 
     /**
@@ -82,7 +85,7 @@ class MemberAreaAppController extends Controller
         $continueWatching = $this->getContinueWatching($product, $user);
         $internalProducts = $product->memberInternalProducts()->with('relatedProduct')->orderBy('position')->get();
         $baseUrl = $this->baseUrlForRequest($product, $request);
-        $userProductIds = $user->products()->pluck('products.id')->flip()->all();
+        $userProductIds = $this->accessService->ownedProductIdSet($user);
         $push = $this->pushProps($product);
 
         return Inertia::render('MemberAreaApp/Show', [
@@ -97,13 +100,24 @@ class MemberAreaAppController extends Controller
             ])->values()->all(),
             'progress_percent' => $progressPercent,
             'continue_watching' => $continueWatching,
-            'internal_products' => $internalProducts->map(fn (MemberInternalProduct $ip) => [
-                'id' => $ip->related_product_id,
-                'name' => $ip->relatedProduct?->name,
-                'image_url' => $ip->relatedProduct?->image ? (new StorageService($product->tenant_id))->url($ip->relatedProduct->image) : null,
-                'checkout_slug' => $ip->relatedProduct?->checkout_slug,
-                'has_access' => $user->products()->where('products.id', $ip->related_product_id)->exists(),
-            ])->values()->all(),
+            'internal_products' => $internalProducts->map(function (MemberInternalProduct $ip) use ($product, $user, $baseUrl) {
+                $related = $ip->relatedProduct;
+                $hasAccess = $this->accessService->userOwnsProduct($user, $ip->related_product_id);
+                $open = ($hasAccess && $related)
+                    ? $this->accessService->resolveMemberAreaRelatedOpenUrl($product, $related, $baseUrl)
+                    : null;
+
+                return [
+                    'id' => $ip->related_product_id,
+                    'name' => $related?->name,
+                    'type' => $related?->type,
+                    'image_url' => $related?->image ? (new StorageService($product->tenant_id))->url($related->image) : null,
+                    'checkout_slug' => $related?->checkout_slug,
+                    'has_access' => $hasAccess,
+                    'open_url' => $open['url'] ?? null,
+                    'access_label' => $open['label'] ?? 'Acessar',
+                ];
+            })->values()->all(),
             'community_enabled' => (bool) ($config['community_enabled'] ?? false),
             'certificate_enabled' => (bool) (($config['certificate'] ?? [])['enabled'] ?? false),
             'can_issue_certificate' => $this->progressService->canIssueCertificate($product, $user),
@@ -219,6 +233,8 @@ class MemberAreaAppController extends Controller
                 'type' => $currentLesson->type,
                 'content_url' => $currentLesson->content_url,
                 'content_files' => $currentLesson->content_files,
+                'support_files' => $currentLesson->support_files,
+                'useful_links' => $currentLesson->useful_links,
                 'link_title' => $currentLesson->link_title,
                 'content_text' => \App\Support\HtmlSanitizer::sanitize($currentLesson->content_text),
                 'duration_seconds' => $currentLesson->duration_seconds,
@@ -230,12 +246,11 @@ class MemberAreaAppController extends Controller
             if ($currentLessonData['watermark_enabled']) {
                 $currentLessonData['student'] = $this->getStudentWatermarkData($user, $product);
             }
-            if ($currentLesson->type === MemberLesson::TYPE_PDF_READER) {
-                $currentLessonData = array_merge($currentLessonData, $this->pdfReaderLessonExtras($currentLesson, $user));
-            }
+            $currentLessonData = array_merge($currentLessonData, $this->lessonEngagementExtras($currentLesson, $user));
         }
 
         $progressPercent = $this->progressService->completionPercent($product, $user);
+        $lessonNavigation = $this->lessonNavigationPayload($effectiveModule, $currentLesson, $accessStartAt, $now);
 
         $sections = $product->memberSections()->with('modules')->orderBy('position')->get();
         $sectionsPayload = $sections->map(fn (MemberSection $s) => [
@@ -284,10 +299,12 @@ class MemberAreaAppController extends Controller
             'module' => [
                 'id' => $module->id,
                 'title' => $module->title,
+                'thumbnail' => $this->moduleThumbnailUrl($module, $product, $effectiveModule),
                 'section' => $module->section ? ['id' => $module->section->id, 'title' => $module->section->title] : null,
             ],
             'lessons' => $lessons,
             'current_lesson' => $currentLessonData,
+            'lesson_navigation' => $lessonNavigation,
             'progress_percent' => $progressPercent,
             'course_lesson_progress' => [
                 'completed' => $this->progressService->completedLessonsCount($product, $user),
@@ -338,6 +355,15 @@ class MemberAreaAppController extends Controller
             return redirect()->route($this->memberAreaModulosRouteName($request), ['slug' => $slug])
                 ->with('error', $lessonLock['lock_message'] ?? 'Aula ainda não liberada.');
         }
+        $moduleRouteId = $wrapper?->id ?? $lesson->module?->id;
+        if ($moduleRouteId) {
+            return redirect()->route($this->memberAreaModuleRouteName($request), [
+                'slug' => $slug,
+                'module' => $moduleRouteId,
+                'aula' => $lesson->id,
+            ]);
+        }
+
         $this->progressService->ensureLessonStarted($lesson, $user);
 
         $this->logMemberActivity($request, $product, $user, 'member_area.lesson_view', [
@@ -361,6 +387,8 @@ class MemberAreaAppController extends Controller
             'type' => $lesson->type,
             'content_url' => $lesson->content_url,
             'content_files' => $lesson->content_files,
+            'support_files' => $lesson->support_files,
+            'useful_links' => $lesson->useful_links,
             'link_title' => $lesson->link_title,
             'content_text' => \App\Support\HtmlSanitizer::sanitize($lesson->content_text),
             'duration_seconds' => $lesson->duration_seconds,
@@ -374,9 +402,7 @@ class MemberAreaAppController extends Controller
         if ($lessonPayload['watermark_enabled']) {
             $lessonPayload['student'] = $this->getStudentWatermarkData($user, $product);
         }
-        if ($lesson->type === MemberLesson::TYPE_PDF_READER) {
-            $lessonPayload = array_merge($lessonPayload, $this->pdfReaderLessonExtras($lesson, $user));
-        }
+        $lessonPayload = array_merge($lessonPayload, $this->lessonEngagementExtras($lesson, $user));
         $config = $product->member_area_config;
         $commentsEnabled = (bool) ($config['comments_enabled'] ?? false);
         $commentsRequireApproval = (bool) ($config['comments_require_approval'] ?? true);
@@ -429,26 +455,16 @@ class MemberAreaAppController extends Controller
             abort(404);
         }
         $url = $urls[$fileIndex];
-        if (! \App\Support\SafeRemoteUrl::isAllowedHttpUrl($url)) {
-            abort(403, 'URL do arquivo não permitida.');
-        }
+        $product = $this->getProduct($request);
 
         $this->progressService->ensureLessonStarted($lesson, $request->user());
 
-        $remote = Http::timeout(120)->connectTimeout(30)->get($url);
-        if (! $remote->successful()) {
-            abort(502, 'Não foi possível obter o arquivo.');
-        }
+        $resolver = new MemberLessonPdfContentResolver(new StorageService($product->tenant_id));
+        $file = $resolver->fetch($url);
 
-        $path = parse_url($url, PHP_URL_PATH);
-        $filename = $path ? basename($path) : 'apresentacao.pdf';
-        if ($filename === '' || $filename === '/') {
-            $filename = 'apresentacao.pdf';
-        }
-
-        return response($remote->body(), 200, [
+        return response($file['body'], 200, [
             'Content-Type' => 'application/pdf',
-            'Content-Disposition' => 'inline; filename="'.$filename.'"',
+            'Content-Disposition' => 'inline; filename="'.$file['filename'].'"',
             'Cache-Control' => 'private, max-age=120',
             'X-Content-Type-Options' => 'nosniff',
         ]);
@@ -524,7 +540,7 @@ class MemberAreaAppController extends Controller
     }
 
     /**
-     * POST — alterna curtida na aula (somente tipo pdf_reader).
+     * POST — alterna curtida na aula.
      */
     public function toggleLessonLike(Request $request, string $slug, MemberLesson $lesson): JsonResponse
     {
@@ -533,9 +549,6 @@ class MemberAreaAppController extends Controller
             return response()->json(['message' => 'Não autenticado.'], 401);
         }
         $this->assertLessonViewableForPdf($request, $lesson);
-        if ($lesson->type !== MemberLesson::TYPE_PDF_READER) {
-            abort(404);
-        }
 
         $liked = false;
         $count = (int) ($lesson->likes_count ?? 0);
@@ -570,18 +583,240 @@ class MemberAreaAppController extends Controller
         ]);
     }
 
-    /**
-     * @return array{likes_count: int, user_liked: bool}
-     */
-    private function pdfReaderLessonExtras(MemberLesson $lesson, User $user): array
+    public function putLessonNote(Request $request, string $slug, MemberLesson $lesson): JsonResponse
     {
+        $user = $request->user();
+        if (! $user) {
+            return response()->json(['message' => 'Não autenticado.'], 401);
+        }
+        $this->assertLessonViewableForPdf($request, $lesson);
+
+        $validated = $request->validate([
+            'notes' => ['nullable', 'string', 'max:5000'],
+        ]);
+
+        $this->progressService->ensureLessonStarted($lesson, $user);
+
+        MemberLessonProgress::query()
+            ->where('user_id', $user->id)
+            ->where('member_lesson_id', $lesson->id)
+            ->update(['notes' => $validated['notes'] ?? null]);
+
+        return response()->json([
+            'success' => true,
+            'notes' => $validated['notes'] ?? '',
+        ]);
+    }
+
+    /**
+     * @return array{likes_count: int, user_liked: bool, user_note: string}
+     */
+    private function lessonEngagementExtras(MemberLesson $lesson, User $user): array
+    {
+        $progress = MemberLessonProgress::query()
+            ->where('user_id', $user->id)
+            ->where('member_lesson_id', $lesson->id)
+            ->first();
+
         return [
             'likes_count' => (int) ($lesson->likes_count ?? 0),
             'user_liked' => MemberLessonLike::query()
                 ->where('user_id', $user->id)
                 ->where('member_lesson_id', $lesson->id)
                 ->exists(),
+            'user_note' => (string) ($progress?->notes ?? ''),
         ];
+    }
+
+    /**
+     * @return '1:1'|'4:5'|'9:16'
+     */
+    private function resolveCommunityMediaAspect(?string $requested, ?\Illuminate\Http\UploadedFile $file = null): string
+    {
+        if (in_array($requested, ['1:1', '4:5', '9:16'], true)) {
+            return $requested;
+        }
+        if ($file === null) {
+            return '4:5';
+        }
+        if (str_starts_with((string) $file->getMimeType(), 'video/')) {
+            return '9:16';
+        }
+
+        return $this->detectCommunityImageAspect($file);
+    }
+
+    /**
+     * @return '1:1'|'4:5'
+     */
+    private function detectCommunityImageAspect(\Illuminate\Http\UploadedFile $file): string
+    {
+        $size = @getimagesize($file->getPathname());
+        if (! is_array($size) || empty($size[0]) || empty($size[1])) {
+            return '4:5';
+        }
+        $ratio = (float) $size[0] / (float) $size[1];
+
+        return abs($ratio - 1.0) <= abs($ratio - 0.8) ? '1:1' : '4:5';
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function communityPostSidebarPayload(MemberCommunityPost $post, Product $product): array
+    {
+        $content = trim(strip_tags((string) ($post->content ?? '')));
+        $excerpt = mb_strlen($content) > 120 ? mb_substr($content, 0, 120).'…' : $content;
+        $payload = [
+            'id' => $post->id,
+            'content' => $post->content,
+            'excerpt' => $excerpt,
+            'image_url' => $post->image_url,
+            'video_url' => $post->video_url,
+            'media_aspect' => $post->media_aspect,
+            'likes_count' => (int) ($post->likes_count ?? $post->likes()->count()),
+            'comments_count' => (int) ($post->comments_count ?? $post->comments()->count()),
+            'created_at' => $post->created_at?->toIso8601String(),
+            'user' => $post->user ? [
+                'id' => $post->user->id,
+                'name' => $post->user->name,
+                'avatar_url' => $post->user->avatar ? (new StorageService($product->tenant_id))->url($post->user->avatar) : null,
+            ] : null,
+        ];
+        if ($post->relationLoaded('page') && $post->page) {
+            $payload['page'] = [
+                'id' => $post->page->id,
+                'title' => $post->page->title,
+                'slug' => $post->page->slug,
+            ];
+        }
+
+        return $payload;
+    }
+
+    /**
+     * Top posts by engagement (likes + comments) on one page or across the product.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function communityFeaturedPostsPayload(Product $product, ?MemberCommunityPage $page = null, int $limit = 5): array
+    {
+        $query = MemberCommunityPost::query()
+            ->when($page, fn ($q) => $q->where('member_community_page_id', $page->id))
+            ->when(! $page, fn ($q) => $q->whereHas('page', fn ($pq) => $pq->where('product_id', $product->id)))
+            ->with(['user:id,name,avatar', 'page:id,title,slug'])
+            ->withCount(['likes', 'comments'])
+            ->orderByRaw('(likes_count + comments_count) DESC')
+            ->orderByDesc('created_at')
+            ->limit($limit);
+
+        return $query->get()
+            ->map(fn (MemberCommunityPost $post) => $this->communityPostSidebarPayload($post, $product))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function communityActiveMembersPayload(Product $product, int $limit = 5): array
+    {
+        $stats = MemberCommunityPost::query()
+            ->join('member_community_pages', 'member_community_posts.member_community_page_id', '=', 'member_community_pages.id')
+            ->where('member_community_pages.product_id', $product->id)
+            ->whereNotNull('member_community_posts.user_id')
+            ->select('member_community_posts.user_id', DB::raw('COUNT(*) as posts_count'))
+            ->groupBy('member_community_posts.user_id')
+            ->orderByDesc('posts_count')
+            ->limit($limit)
+            ->get();
+
+        if ($stats->isEmpty()) {
+            return [];
+        }
+
+        $users = User::query()
+            ->whereIn('id', $stats->pluck('user_id'))
+            ->get(['id', 'name', 'avatar'])
+            ->keyBy('id');
+
+        $storage = new StorageService($product->tenant_id);
+
+        return $stats->map(function ($row) use ($users, $storage) {
+            $user = $users->get($row->user_id);
+            if (! $user) {
+                return null;
+            }
+
+            return [
+                'id' => $user->id,
+                'name' => $user->name,
+                'avatar_url' => $user->avatar ? $storage->url($user->avatar) : null,
+                'posts_count' => (int) $row->posts_count,
+            ];
+        })->filter()->values()->all();
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function communityPageNavPayload(\Illuminate\Support\Collection $pages, Product $product): array
+    {
+        $storage = new StorageService($product->tenant_id);
+
+        return $pages->map(fn (MemberCommunityPage $p) => [
+            'id' => $p->id,
+            'title' => $p->title,
+            'icon' => $p->icon,
+            'slug' => $p->slug,
+            'banner_url' => $p->banner ? $storage->url($p->banner) : null,
+            'is_featured' => (bool) ($p->is_featured ?? false),
+        ])->values()->all();
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function communityFeaturedPagesPayload(Product $product, ?string $excludeSlug = null): array
+    {
+        $storage = new StorageService($product->tenant_id);
+
+        return $product->memberCommunityPages()
+            ->where('is_featured', true)
+            ->orderBy('position')
+            ->get()
+            ->when($excludeSlug, fn ($pages) => $pages->filter(fn (MemberCommunityPage $p) => $p->slug !== $excludeSlug))
+            ->map(fn (MemberCommunityPage $p) => [
+                'id' => $p->id,
+                'title' => $p->title,
+                'icon' => $p->icon,
+                'slug' => $p->slug,
+                'banner_url' => $p->banner ? $storage->url($p->banner) : null,
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function communityCrossPagePostsPayload(Product $product, ?MemberCommunityPage $excludePage = null, int $limit = 5): array
+    {
+        return MemberCommunityPost::query()
+            ->whereHas('page', function ($q) use ($product, $excludePage) {
+                $q->where('product_id', $product->id);
+                if ($excludePage) {
+                    $q->where('id', '!=', $excludePage->id);
+                }
+            })
+            ->with(['user:id,name,avatar', 'page:id,title,slug'])
+            ->withCount(['likes', 'comments'])
+            ->latest()
+            ->limit($limit)
+            ->get()
+            ->map(fn (MemberCommunityPost $post) => $this->communityPostSidebarPayload($post, $product))
+            ->values()
+            ->all();
     }
 
     public function completeLesson(Request $request, string $slug, MemberLesson $lesson): JsonResponse|RedirectResponse
@@ -673,17 +908,27 @@ class MemberAreaAppController extends Controller
         $product = $this->getProduct($request);
         $user = $request->user();
         $internalProducts = $product->memberInternalProducts()->with('relatedProduct')->orderBy('position')->get();
-        $userProductIds = $user->products()->pluck('products.id')->flip()->all();
+        $baseUrl = $this->baseUrlForRequest($product, $request);
 
-        $items = $internalProducts->map(fn (MemberInternalProduct $ip) => [
-            'id' => $ip->related_product_id,
-            'name' => $ip->relatedProduct?->name,
-            'description' => $ip->relatedProduct?->description,
-            'image_url' => $ip->relatedProduct?->image ? (new StorageService($product->tenant_id))->url($ip->relatedProduct->image) : null,
-            'checkout_slug' => $ip->relatedProduct?->checkout_slug,
-            'price' => $ip->relatedProduct?->price,
-            'has_access' => isset($userProductIds[$ip->related_product_id]),
-        ])->values()->all();
+        $items = $internalProducts->map(function (MemberInternalProduct $ip) use ($product, $user, $baseUrl) {
+            $related = $ip->relatedProduct;
+            $hasAccess = $this->accessService->userOwnsProduct($user, $ip->related_product_id);
+            $open = ($hasAccess && $related)
+                ? $this->accessService->resolveMemberAreaRelatedOpenUrl($product, $related, $baseUrl)
+                : null;
+
+            return [
+                'id' => $ip->related_product_id,
+                'name' => $related?->name,
+                'description' => $related?->description,
+                'image_url' => $related?->image ? (new StorageService($product->tenant_id))->url($related->image) : null,
+                'checkout_slug' => $related?->checkout_slug,
+                'price' => $related?->price,
+                'has_access' => $hasAccess,
+                'open_url' => $open['url'] ?? null,
+                'access_label' => $open['label'] ?? 'Acessar',
+            ];
+        })->values()->all();
 
         return Inertia::render('MemberAreaApp/Loja', [
             'product' => $this->productToArray($product),
@@ -711,13 +956,11 @@ class MemberAreaAppController extends Controller
         return Inertia::render('MemberAreaApp/Comunidade', [
             'product' => $this->productToArray($product),
             'config' => $product->member_area_config,
-            'pages' => $pages->map(fn ($p) => [
-                'id' => $p->id,
-                'title' => $p->title,
-                'icon' => $p->icon,
-                'slug' => $p->slug,
-                'banner_url' => $p->banner ? (new StorageService($product->tenant_id))->url($p->banner) : null,
-            ])->values()->all(),
+            'pages' => $this->communityPageNavPayload($pages, $product),
+            'featured_posts' => $this->communityFeaturedPostsPayload($product),
+            'featured_pages' => $this->communityFeaturedPagesPayload($product),
+            'cross_page_posts' => $this->communityCrossPagePostsPayload($product),
+            'active_members' => $this->communityActiveMembersPayload($product),
             'base_url' => $this->baseUrlForRequest($product, $request),
             'slug' => $slug,
             ...$this->pushProps($product),
@@ -738,7 +981,7 @@ class MemberAreaAppController extends Controller
         $posts = $postsQuery->paginate(20);
         $canDeleteAny = $user->canAccessPanel() && $user->tenant_id === $product->tenant_id;
         $usersCanDeleteOwn = (bool) ($config['community_users_can_delete_own_posts'] ?? true);
-        $posts->getCollection()->transform(function (MemberCommunityPost $post) use ($user) {
+        $posts->getCollection()->transform(function (MemberCommunityPost $post) use ($user, $product) {
             $comments = $post->comments->map(fn (MemberCommunityPostComment $c) => [
                 'id' => $c->id,
                 'content' => $c->content,
@@ -768,13 +1011,7 @@ class MemberAreaAppController extends Controller
             'auth_user_id' => $user->id,
             'can_delete_any_post' => $canDeleteAny,
             'community_users_can_delete_own_posts' => $usersCanDeleteOwn,
-            'pages' => $pages->map(fn ($p) => [
-                'id' => $p->id,
-                'title' => $p->title,
-                'icon' => $p->icon,
-                'slug' => $p->slug,
-                'banner_url' => $p->banner ? (new StorageService($product->tenant_id))->url($p->banner) : null,
-            ])->values()->all(),
+            'pages' => $this->communityPageNavPayload($pages, $product),
             'page' => [
                 'id' => $page->id,
                 'title' => $page->title,
@@ -784,6 +1021,10 @@ class MemberAreaAppController extends Controller
                 'is_public_posting' => $page->is_public_posting,
             ],
             'posts' => $posts,
+            'featured_posts' => $this->communityFeaturedPostsPayload($product, $page),
+            'featured_pages' => $this->communityFeaturedPagesPayload($product, $page->slug),
+            'cross_page_posts' => $this->communityCrossPagePostsPayload($product, $page),
+            'active_members' => $this->communityActiveMembersPayload($product),
             'base_url' => $this->baseUrlForRequest($product, $request),
             'slug' => $slug,
             ...$this->pushProps($product),
@@ -799,18 +1040,34 @@ class MemberAreaAppController extends Controller
         }
         $validated = $request->validate([
             'content' => ['required', 'string', 'max:5000'],
+            'media_aspect' => ['nullable', 'string', 'in:1:1,4:5,9:16'],
             'image' => ['nullable', 'file', 'image', 'max:5120'],
+            'video' => ['nullable', 'file', 'mimetypes:video/mp4,video/webm,video/quicktime', 'max:51200'],
+        ], [
+            'video.mimetypes' => 'O vídeo deve ser MP4, WebM ou MOV.',
+            'video.max' => 'O vídeo deve ter no máximo 50 MB.',
         ]);
+        if ($request->hasFile('image') && $request->hasFile('video')) {
+            return back()->withErrors(['image' => 'Envie apenas imagem ou vídeo, não os dois.']);
+        }
+        $storage = new StorageService($product->tenant_id);
         $imagePath = null;
-        if ($request->hasFile('image')) {
-            $storage = new StorageService($product->tenant_id);
+        $videoPath = null;
+        $mediaAspect = $validated['media_aspect'] ?? null;
+        if ($request->hasFile('video')) {
+            $videoPath = $storage->putFile('member-area-posts/'.$product->id.'/videos', $request->file('video'));
+            $mediaAspect = '9:16';
+        } elseif ($request->hasFile('image')) {
             $imagePath = $storage->putFile('member-area-posts/'.$product->id, $request->file('image'));
+            $mediaAspect = $this->resolveCommunityMediaAspect($mediaAspect, $request->file('image'));
         }
         MemberCommunityPost::create([
             'member_community_page_id' => $page->id,
             'user_id' => $request->user()->id,
             'content' => $validated['content'],
             'image' => $imagePath,
+            'video' => $videoPath,
+            'media_aspect' => $mediaAspect,
         ]);
 
         return back()->with('success', 'Post publicado.');
@@ -1118,7 +1375,7 @@ class MemberAreaAppController extends Controller
             $moduleForMeta = $wrapper ?? $lesson->module;
             $moduleThumbnail = null;
             if ($moduleForMeta && $moduleForMeta->thumbnail) {
-                $moduleThumbnail = str_starts_with($moduleForMeta->thumbnail, 'http') ? $moduleForMeta->thumbnail : (new StorageService($product->tenant_id))->url($moduleForMeta->thumbnail);
+                $moduleThumbnail = $this->moduleThumbnailUrl($moduleForMeta, $product);
             }
             $items[] = [
                 'lesson_id' => $lesson->id,
@@ -1448,7 +1705,7 @@ class MemberAreaAppController extends Controller
 
         if ($sectionType === 'products') {
             $related = $m->relatedProduct;
-            $hasAccess = $m->related_product_id ? isset($userProductIds[$m->related_product_id]) : false;
+            $hasAccess = $m->related_product_id ? $this->accessService->hasOwnedProductId($userProductIds, $m->related_product_id) : false;
             $embed = $m->source_member_module_id
                 && $related
                 && $related->type === Product::TYPE_AREA_MEMBROS;
@@ -1579,6 +1836,60 @@ class MemberAreaAppController extends Controller
             }
         }
         return $this->lockPayload($availableAt, $now, $mode);
+    }
+
+    private function moduleThumbnailUrl(MemberModule $module, Product $product, ?MemberModule $fallback = null): ?string
+    {
+        $raw = trim((string) ($module->thumbnail ?: $fallback?->thumbnail ?: ''));
+        if ($raw === '') {
+            return null;
+        }
+
+        if (str_starts_with($raw, 'http://') || str_starts_with($raw, 'https://')) {
+            return $raw;
+        }
+
+        if (str_starts_with($raw, '/storage/')) {
+            return $raw;
+        }
+
+        if (str_starts_with($raw, 'storage/')) {
+            return '/'.ltrim($raw, '/');
+        }
+
+        return (new StorageService($product->tenant_id))->url($raw);
+    }
+
+    /**
+     * @return array{prev: array{id: int, title: string}|null, next: array{id: int, title: string}|null}
+     */
+    private function lessonNavigationPayload(MemberModule $module, ?MemberLesson $currentLesson, Carbon $accessStartAt, Carbon $now): array
+    {
+        if (! $currentLesson) {
+            return ['prev' => null, 'next' => null];
+        }
+
+        $unlocked = $module->lessons->filter(function (MemberLesson $lesson) use ($module, $accessStartAt, $now) {
+            return ($this->lessonLockPayload($lesson, $module, $accessStartAt, $now)['is_locked'] ?? false) !== true;
+        })->values();
+
+        $index = $unlocked->search(fn (MemberLesson $lesson) => $lesson->id === $currentLesson->id);
+        if ($index === false) {
+            return ['prev' => null, 'next' => null];
+        }
+
+        $prev = null;
+        $next = null;
+        if ($index > 0) {
+            $p = $unlocked[$index - 1];
+            $prev = ['id' => $p->id, 'title' => $p->title];
+        }
+        if ($index < $unlocked->count() - 1) {
+            $n = $unlocked[$index + 1];
+            $next = ['id' => $n->id, 'title' => $n->title];
+        }
+
+        return ['prev' => $prev, 'next' => $next];
     }
 
     private function isLessonCompleted(int $userId, int $lessonId): bool

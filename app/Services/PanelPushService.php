@@ -6,10 +6,11 @@ use App\Models\PanelNotification;
 use App\Models\PanelPushSubscription;
 use App\Support\PanelPushPreferences;
 use App\Support\VapidEnvKeys;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Minishlink\WebPush\Subscription;
 use Minishlink\WebPush\VAPID;
 use Minishlink\WebPush\WebPush;
-use Illuminate\Support\Facades\Log;
 
 class PanelPushService
 {
@@ -56,14 +57,33 @@ class PanelPushService
             }
         }
 
-        return $this->sendToTenant($tenantId, $title, $body, $url, $category);
+        $dedupeKey = $this->pushDedupeCacheKey($tenantId, $eventKey);
+        if ($dedupeKey !== null && ! Cache::add($dedupeKey, true, now()->addDays(7))) {
+            Log::info('PanelPushService: push ignorado (evento já enviado)', [
+                'tenant_id' => $tenantId,
+                'event_key' => $eventKey,
+                'type' => $type,
+            ]);
+
+            return 0;
+        }
+
+        $sent = $this->sendToTenant($tenantId, $title, $body, $url, $category, $eventKey);
+
+        return $sent;
     }
 
     /**
      * @param  'pix'|'boleto'|'card'  $category
      */
-    public function sendToTenant(?int $tenantId, string $title, string $body, ?string $url = null, string $category = 'pix'): int
-    {
+    public function sendToTenant(
+        ?int $tenantId,
+        string $title,
+        string $body,
+        ?string $url = null,
+        string $category = 'pix',
+        ?string $notificationTag = null
+    ): int {
         $vapidPublic = VapidEnvKeys::normalize(config('getfy.pwa.vapid_public'));
         $vapidPrivate = VapidEnvKeys::normalize(config('getfy.pwa.vapid_private'));
 
@@ -115,6 +135,7 @@ class PanelPushService
             'title' => $title,
             'body' => $body,
             'url' => $url,
+            'tag' => $notificationTag ?: ($url ?: 'panel-push'),
         ]);
 
         $sent = 0;
@@ -242,5 +263,14 @@ class PanelPushService
             return strtr($key, ['+' => '-', '/' => '_']);
         }
         return $key;
+    }
+
+    private function pushDedupeCacheKey(?int $tenantId, ?string $eventKey): ?string
+    {
+        if ($eventKey === null || $eventKey === '') {
+            return null;
+        }
+
+        return 'panel_push_sent.'.($tenantId ?? '0').'.'.$eventKey;
     }
 }

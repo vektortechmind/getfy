@@ -37,7 +37,7 @@ class MemberAreaPdfPresentationProxyTest extends TestCase
             'position' => 1,
         ]);
 
-        $remoteUrl = 'https://r2.example.com/member-area/test/pres.pdf';
+        $remoteUrl = 'https://r2.getfy.cloud/member-area/test/pres.pdf';
         $lesson = MemberLesson::create([
             'member_module_id' => $module->id,
             'product_id' => $product->id,
@@ -100,7 +100,7 @@ class MemberAreaPdfPresentationProxyTest extends TestCase
             'type' => MemberLesson::TYPE_PDF_PRESENTATION,
             'content_url' => '',
             'content_files' => [
-                ['url' => 'https://r2.example.com/a.pdf', 'name' => 'a.pdf'],
+                ['url' => 'https://r2.getfy.cloud/a.pdf', 'name' => 'a.pdf'],
             ],
         ]);
 

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\MemberActivityLog;
 use App\Models\Product;
 use App\Models\User;
+use App\Support\MemberAreaLoginPageProps;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -45,24 +46,9 @@ class MemberAreaLoginController extends Controller
         if (Auth::check() && $product->hasMemberAreaAccess(Auth::user())) {
             return redirect()->route('member-area-app.show', ['slug' => $slug]);
         }
-        $config = $product->member_area_config;
-        $loginConfig = $config['login'] ?? [];
         return Inertia::render('MemberAreaApp/Login', [
             'slug' => $slug,
-            'product' => [
-                'name' => $product->name,
-                'logo_light' => $loginConfig['logo'] ?? ($config['logos']['logo_light'] ?? ''),
-                'logo_dark' => $config['logos']['logo_dark'] ?? '',
-                'title' => $loginConfig['title'] ?? 'Área de Membros',
-                'subtitle' => $loginConfig['subtitle'] ?? 'Entre com seu e-mail e senha',
-                'background_image' => $loginConfig['background_image'] ?? '',
-                'background_color' => $loginConfig['background_color'] ?? '#18181b',
-                'primary_color' => $loginConfig['primary_color'] ?? '#0ea5e9',
-                'login_without_password' => (bool) ($loginConfig['login_without_password'] ?? false),
-                'login_without_password_url' => ! empty($loginConfig['login_without_password'])
-                    ? ($request->route('slug') !== null ? url('/m/' . $slug . '/login-without-password') : url('/login-without-password'))
-                    : null,
-            ],
+            'product' => MemberAreaLoginPageProps::productArray($product, $request, $slug),
         ]);
     }
 

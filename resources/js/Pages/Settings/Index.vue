@@ -561,9 +561,37 @@ async function testStorageConnection() {
     }
 }
 
+function restoreRemoteStorageFieldsIfEmpty() {
+    syncStorageFormFromSettings(props.settings);
+}
+
+function syncStorageFormFromSettings(settings) {
+    if (!settings) return;
+    if (!(form.storage_s3_key ?? '').trim() && (settings.storage_s3_key ?? '').trim()) {
+        form.storage_s3_key = settings.storage_s3_key;
+    }
+    if (!(form.storage_s3_bucket ?? '').trim() && (settings.storage_s3_bucket ?? '').trim()) {
+        form.storage_s3_bucket = settings.storage_s3_bucket;
+    }
+    if (!(form.storage_s3_endpoint ?? '').trim() && (settings.storage_s3_endpoint ?? '').trim()) {
+        form.storage_s3_endpoint = settings.storage_s3_endpoint;
+    }
+    if (!(form.storage_s3_url ?? '').trim() && (settings.storage_s3_url ?? '').trim()) {
+        form.storage_s3_url = settings.storage_s3_url;
+    }
+    if (settings.storage_provider === 'r2') {
+        form.storage_s3_region = 'auto';
+    } else if (!(form.storage_s3_region ?? '').trim() && (settings.storage_s3_region ?? '').trim()) {
+        form.storage_s3_region = settings.storage_s3_region;
+    }
+}
+
 function onStorageProviderChange(providerId) {
     form.storage_provider = providerId;
     showCloudR2Override.value = false;
+    if (providerId !== 'local') {
+        restoreRemoteStorageFieldsIfEmpty();
+    }
     const prov = storageProviders.find((p) => p.id === providerId);
     if (prov?.endpoint && !form.storage_s3_endpoint) {
         form.storage_s3_endpoint = prov.endpoint;
@@ -738,7 +766,7 @@ const selectClass =
         <form
             v-show="activeTab !== 'update' && activeTab !== 'cron' && !isPluginTab(activeTab)"
             class="w-full max-w-full space-y-6"
-            @submit.prevent="form.put('/configuracoes')"
+            @submit.prevent="form.put('/configuracoes', { preserveScroll: true, onSuccess: (page) => syncStorageFormFromSettings(page.props.settings) })"
         >
             <!-- Aba E-MAIL -->
             <Transition

@@ -2,7 +2,7 @@
 import { ref, watch, computed } from 'vue';
 import axios from 'axios';
 import Button from '@/components/ui/Button.vue';
-import { X, ExternalLink, Copy, Check } from 'lucide-vue-next';
+import { X, ExternalLink, Copy, Check, ChevronDown, ChevronUp } from 'lucide-vue-next';
 
 const props = defineProps({
     open: { type: Boolean, default: false },
@@ -37,6 +37,15 @@ const fees = ref({
 });
 const savingFees = ref(false);
 const feesMessage = ref('');
+const feesPanelOpen = ref(false);
+
+const feeMethodLabels = {
+    pix: 'PIX',
+    card: 'Cartão',
+    boleto: 'Boleto',
+};
+
+const isCajuPay = computed(() => (props.gatewaySlug || gateway.value?.slug || '').toLowerCase() === 'cajupay');
 
 async function loadFees(slug) {
     try {
@@ -93,6 +102,8 @@ watch(
         if (open && slug) {
             loading.value = true;
             testMessage.value = null;
+            feesPanelOpen.value = false;
+            feesMessage.value = '';
             webhookCopied.value = false;
             webhookCopiedSecondary.value = false;
             credentialValues.value = {};
@@ -568,25 +579,69 @@ const canTestConnection = computed(() => {
                     </div>
 
                     <div class="mt-6 border-t border-zinc-200 pt-4 dark:border-zinc-700">
-                        <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">Taxas para comissões (líquido)</h3>
-                        <p class="mt-1 text-xs text-zinc-500">Usadas no cálculo de co-produção e afiliados.</p>
-                        <div class="mt-3 space-y-3">
-                            <div v-for="method in ['pix', 'card', 'boleto']" :key="method" class="grid grid-cols-3 gap-2 items-end">
-                                <span class="text-xs font-medium uppercase text-zinc-500">{{ method }}</span>
+                        <button
+                            type="button"
+                            class="flex w-full items-start justify-between gap-3 text-left"
+                            :aria-expanded="feesPanelOpen"
+                            @click="feesPanelOpen = !feesPanelOpen"
+                        >
+                            <div class="min-w-0">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">
+                                        Taxas para comissões (líquido)
+                                    </h3>
+                                    <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                        Opcional
+                                    </span>
+                                </div>
+                                <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                                    Só necessário se você usa co-produção ou afiliados e quer descontar a taxa do gateway no valor líquido.
+                                </p>
+                                <p v-if="isCajuPay && !feesPanelOpen" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                                    Padrão CajuPay PIX: 0% + R$ 0,99 fixo.
+                                </p>
+                            </div>
+                            <ChevronUp v-if="feesPanelOpen" class="mt-0.5 h-5 w-5 shrink-0 text-zinc-400" />
+                            <ChevronDown v-else class="mt-0.5 h-5 w-5 shrink-0 text-zinc-400" />
+                        </button>
+
+                        <div v-show="feesPanelOpen" class="mt-3 space-y-3">
+                            <div
+                                v-for="method in ['pix', 'card', 'boleto']"
+                                :key="method"
+                                class="grid grid-cols-3 items-end gap-2"
+                            >
+                                <span class="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                                    {{ feeMethodLabels[method] }}
+                                </span>
                                 <div>
-                                    <label class="text-[10px] text-zinc-500">% </label>
-                                    <input v-model.number="fees[method].percent" type="number" step="0.01" min="0" class="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900" />
+                                    <label class="text-[10px] text-zinc-500">Percentual (%)</label>
+                                    <input
+                                        v-model.number="fees[method].percent"
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        class="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                                    />
                                 </div>
                                 <div>
-                                    <label class="text-[10px] text-zinc-500">Fixo (cent)</label>
-                                    <input v-model.number="fees[method].fixed_cents" type="number" min="0" class="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900" />
+                                    <label class="text-[10px] text-zinc-500">Fixo (centavos)</label>
+                                    <input
+                                        v-model.number="fees[method].fixed_cents"
+                                        type="number"
+                                        min="0"
+                                        class="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                                    />
                                 </div>
                             </div>
+                            <p class="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                Ex.: 99 centavos = R$ 0,99. Deixe em branco (0) se não quiser usar taxa fixa.
+                            </p>
+                            <Button type="button" class="w-full" variant="outline" :disabled="savingFees" @click="saveFees">
+                                {{ savingFees ? 'Salvando…' : 'Salvar taxas' }}
+                            </Button>
+                            <p v-if="feesMessage" class="text-xs text-zinc-500">{{ feesMessage }}</p>
                         </div>
-                        <Button type="button" class="mt-3 w-full" variant="outline" :disabled="savingFees" @click="saveFees">
-                            {{ savingFees ? 'Salvando…' : 'Salvar taxas' }}
-                        </Button>
-                        <p v-if="feesMessage" class="mt-2 text-xs text-zinc-500">{{ feesMessage }}</p>
                     </div>
 
                     <p

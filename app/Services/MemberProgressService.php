@@ -95,7 +95,48 @@ class MemberProgressService
             return 100;
         }
         $completed = $this->completedLessonsCount($product, $user);
+
         return (int) min(100, round(($completed / $total) * 100));
+    }
+
+    /**
+     * Most recent in-progress lesson for "continue watching" (member area host product).
+     *
+     * @return array{lesson_id: int|string, module_id: int|string|null, lesson_title: string, module_title: string|null}|null
+     */
+    public function latestContinueWatching(Product $product, User $user): ?array
+    {
+        $lessonIds = $this->lessonIdsForMemberAreaHost($product);
+        if ($lessonIds === []) {
+            return null;
+        }
+
+        $progress = MemberLessonProgress::query()
+            ->forUser($user->id)
+            ->whereNull('completed_at')
+            ->whereIn('member_lesson_id', $lessonIds)
+            ->with('lesson.module')
+            ->latest('updated_at')
+            ->first();
+
+        if (! $progress?->lesson) {
+            return null;
+        }
+
+        $lesson = $progress->lesson;
+        $wrapper = MemberModule::query()
+            ->where('product_id', $product->id)
+            ->where('source_member_module_id', $lesson->member_module_id)
+            ->first();
+
+        $moduleForMeta = $wrapper ?? $lesson->module;
+
+        return [
+            'lesson_id' => $lesson->id,
+            'module_id' => $wrapper?->id ?? $lesson->module?->id,
+            'lesson_title' => $lesson->title,
+            'module_title' => $moduleForMeta?->title,
+        ];
     }
 
     /**

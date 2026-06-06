@@ -5,7 +5,6 @@ namespace Tests;
 use App\Models\Product;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
-use Illuminate\Support\Facades\Route;
 
 abstract class TestCase extends BaseTestCase
 {
@@ -14,25 +13,6 @@ abstract class TestCase extends BaseTestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->registerWebhookEntradaPublicRoutesIfMissing();
-    }
-
-    /**
-     * Quando a tabela plugins existe e o plugin não está enabled no DB, o PluginServiceProvider não carrega
-     * routes-public; re-registra aqui para testes (evita duplicar se o fallback já carregou o plugin).
-     */
-    protected function registerWebhookEntradaPublicRoutesIfMissing(): void
-    {
-        if (Route::has('webhook-entrada.inbound.post')) {
-            return;
-        }
-        $path = base_path('plugins/webhook-entrada/routes-public.php');
-        if (! is_file($path)) {
-            return;
-        }
-        Route::middleware(['web', 'throttle:120,1'])
-            ->prefix('webhooks/inbound')
-            ->group($path);
     }
 
     /**

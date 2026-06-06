@@ -49,8 +49,7 @@ class SharedHostingArtisan
         $failedMigration = null;
 
         try {
-            $kernel = self::bootstrap($basePath);
-            $app = $kernel->getApplication();
+            $app = self::bootstrap($basePath);
             $migrator = $app->make('migrator');
 
             $paths = self::migrationPaths($app);
@@ -205,8 +204,7 @@ class SharedHostingArtisan
     public static function countPending(string $basePath): array
     {
         try {
-            $kernel = self::bootstrap($basePath);
-            $app = $kernel->getApplication();
+            $app = self::bootstrap($basePath);
             $migrator = $app->make('migrator');
             $paths = self::migrationPaths($app);
             $files = $migrator->getMigrationFiles($paths);
@@ -283,7 +281,8 @@ class SharedHostingArtisan
     public static function runArtisanCommand(string $basePath, string $command, array $parameters = []): array
     {
         try {
-            $kernel = self::bootstrap($basePath);
+            $app = self::bootstrap($basePath);
+            $kernel = $app->make(ConsoleKernel::class);
             $kernel->call($command, $parameters);
             $output = trim((string) $kernel->output());
 
@@ -297,7 +296,7 @@ class SharedHostingArtisan
         }
     }
 
-    public static function bootstrap(string $basePath): ConsoleKernel
+    public static function bootstrap(string $basePath): Application
     {
         self::clearCaches($basePath);
 
@@ -313,7 +312,7 @@ class SharedHostingArtisan
         $kernel = $app->make(ConsoleKernel::class);
         $kernel->bootstrap();
 
-        return $kernel;
+        return $app;
     }
 
     /**

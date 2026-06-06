@@ -185,6 +185,8 @@ class SettingsController extends Controller
             'storage_provider', 'storage_s3_key', 'storage_s3_bucket', 'storage_s3_region',
             'storage_s3_endpoint', 'storage_s3_url',
         ];
+        $storageProvider = $validated['storage_provider']
+            ?? Setting::get('storage_provider', 'local', $tenantId);
 
         foreach ($validated as $key => $value) {
             if (in_array($key, ['smtp_password', 'hostinger_smtp_password', 'sendgrid_api_key', 'storage_s3_secret'], true)) {
@@ -197,6 +199,17 @@ class SettingsController extends Controller
             if (in_array($key, $alwaysSetKeys, true) || in_array($key, $emailKeys, true)) {
                 Setting::set($key, $value ?? '', $tenantId);
             } elseif (in_array($key, $storageKeys, true)) {
+                if ($key === 'storage_provider') {
+                    Setting::set($key, $value ?? 'local', $tenantId);
+                    continue;
+                }
+
+                // Ao usar storage local, os campos S3/R2 ficam ocultos no formulário e chegam vazios.
+                // Não apagar credenciais já salvas — só o provedor ativo muda.
+                if ($storageProvider === 'local' && ($value === null || $value === '')) {
+                    continue;
+                }
+
                 Setting::set($key, $value ?? '', $tenantId);
             } elseif ($key === 'checkout_translations') {
                 if (is_array($value) && ! empty($value)) {

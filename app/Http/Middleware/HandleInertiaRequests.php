@@ -96,6 +96,7 @@ class HandleInertiaRequests extends Middleware
         $memberNotificationsUnreadCount = 0;
         $memberPushSubscribed = false;
         $refundEligibility = null;
+        $showStudentHubLink = false;
         if ($user && $isMemberArea) {
             $product = $request->route('product') ?? $request->attributes->get('member_area_product');
             if ($product) {
@@ -110,6 +111,7 @@ class HandleInertiaRequests extends Middleware
                     $refundEligibility = app(RefundService::class)->eligibility($product, $user);
                 }
             }
+            $showStudentHubLink = $user->products()->count() > 1;
         }
 
         $shared = [
@@ -167,6 +169,7 @@ class HandleInertiaRequests extends Middleware
             'member_notifications_unread_count' => $memberNotificationsUnreadCount,
             'member_push_subscribed' => $memberPushSubscribed,
             'refund_eligibility' => $refundEligibility,
+            'show_student_hub_link' => $showStudentHubLink,
         ];
 
         if (! $skipPanelPwa) {
@@ -209,6 +212,7 @@ class HandleInertiaRequests extends Middleware
             'api-applications.create' => 'Nova aplicação API',
             'api-applications.edit' => 'Editar aplicação API',
             'conquistas.index' => 'Conquistas',
+            'student-area.index' => 'Meus produtos',
         ];
 
         return $name ? ($titles[$name] ?? null) : null;

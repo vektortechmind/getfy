@@ -169,6 +169,76 @@ class StorageService
     }
 
     /**
+     * Resolve a public URL back to the storage path when it points at this tenant's disk.
+     */
+    public function pathFromUrl(string $url): ?string
+    {
+        $url = trim($url);
+        if ($url === '') {
+            return null;
+        }
+
+        if (str_starts_with($url, '/storage/')) {
+            return $this->normalizeStorageRelativePath(ltrim(substr($url, 9), '/'));
+        }
+
+        if (preg_match('#^https?://#i', $url)) {
+            $path = parse_url($url, PHP_URL_PATH);
+            if (is_string($path) && str_starts_with($path, '/storage/')) {
+                return $this->normalizeStorageRelativePath(ltrim(substr($path, 9), '/'));
+            }
+        }
+
+        if (str_starts_with($url, 'storage/')) {
+            return $this->normalizeStorageRelativePath(ltrim(substr($url, 8), '/'));
+        }
+
+        if (str_starts_with($url, 'member-area/') || str_starts_with($url, 'member-pdf-library/')) {
+            return rawurldecode($url);
+        }
+
+        $this->disk();
+
+        foreach ($this->publicUrlPrefixes() as $prefix) {
+            if (str_starts_with($url, $prefix)) {
+                $path = ltrim(substr($url, strlen($prefix)), '/');
+
+                return $path !== '' ? rawurldecode($path) : null;
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizeStorageRelativePath(string $path): ?string
+    {
+        $path = rawurldecode(trim($path, '/'));
+
+        return $path !== '' ? $path : null;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function publicUrlPrefixes(): array
+    {
+        $prefixes = [];
+
+        if ($this->isLocal) {
+            $prefixes[] = '/storage/';
+            $prefixes[] = rtrim((string) url('/storage'), '/').'/';
+        } else {
+            $probe = 'member-area/__pdf_path_probe__';
+            $sample = $this->disk->url($probe);
+            if (is_string($sample) && str_contains($sample, '__pdf_path_probe__')) {
+                $prefixes[] = substr($sample, 0, (int) strpos($sample, '__pdf_path_probe__'));
+            }
+        }
+
+        return array_values(array_unique(array_filter($prefixes)));
+    }
+
+    /**
      * Get the public URL for a stored file.
      * Local disk returns a relative path (/storage/...) so images work on any host (custom domain, ngrok, etc.).
      */

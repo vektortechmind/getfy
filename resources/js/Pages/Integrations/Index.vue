@@ -8,6 +8,7 @@ import ConversionPixelsAppCard from '@/components/integrations/ConversionPixelsA
 import SpedySidebar from '@/components/integrations/SpedySidebar.vue';
 import UtmifySidebar from '@/components/integrations/UtmifySidebar.vue';
 import WebhookSidebar from '@/components/integrations/WebhookSidebar.vue';
+import ExternalCheckoutSidebar from '@/components/integrations/ExternalCheckoutSidebar.vue';
 import CademiSidebar from '@/components/integrations/CademiSidebar.vue';
 import ConversionPixelsSidebar from '@/components/integrations/ConversionPixelsSidebar.vue';
 import GatewayCard from '@/components/settings/GatewayCard.vue';
@@ -25,8 +26,14 @@ const APPS_BASE = [
     {
         id: 'webhook',
         name: 'Webhook',
-        description: 'Painel com métricas, logs e documentação de payloads por evento. Configure URL, eventos e Bearer token.',
+        description: 'Envie eventos da plataforma para a URL configurada. Painel com métricas, logs e documentação de payloads por evento.',
         image: 'images/integrations/webhook.png',
+    },
+    {
+        id: 'external_checkout',
+        name: 'Checkout externo',
+        description: 'Receba vendas aprovadas de checkouts externos (Hotmart, Kiwify, etc.) via POST. Cria pedido, aluno e libera área de membros.',
+        image: 'images/integrations/external.png',
     },
     {
         id: 'utmify',
@@ -72,6 +79,7 @@ const props = defineProps({
     api_applications: { type: Array, default: () => [] },
     plugin_apps: { type: Array, default: () => [] },
     conversion_pixel_integrations: { type: Array, default: () => [] },
+    external_checkout_endpoints: { type: Array, default: () => [] },
 });
 
 import { usePluginComponentResolver } from '@/composables/usePluginComponentResolver';
@@ -122,6 +130,13 @@ const APPS = computed(() =>
                 status: hasActive ? 'active' : undefined,
             };
         }
+        if (app.id === 'external_checkout') {
+            const hasActive = (props.external_checkout_endpoints || []).some((e) => e.is_active);
+            return {
+                ...app,
+                status: hasActive ? 'active' : undefined,
+            };
+        }
         return app;
     }),
         ...((props.plugin_apps || []).map((p) => ({
@@ -144,6 +159,7 @@ const utmifySidebarOpen = ref(false);
 const spedySidebarOpen = ref(false);
 const cademiSidebarOpen = ref(false);
 const conversionPixelsSidebarOpen = ref(false);
+const externalCheckoutSidebarOpen = ref(false);
 const pluginSidebarOpen = ref(false);
 const selectedPluginSlot = ref(null);
 const selectedPluginAppName = ref(null);
@@ -188,6 +204,18 @@ function openCademiSidebar() {
 
 function closeCademiSidebar() {
     cademiSidebarOpen.value = false;
+}
+
+function openExternalCheckoutSidebar() {
+    externalCheckoutSidebarOpen.value = true;
+}
+
+function closeExternalCheckoutSidebar() {
+    externalCheckoutSidebarOpen.value = false;
+}
+
+function onExternalCheckoutSaved() {
+    router.reload({ only: ['external_checkout_endpoints', 'products'] });
 }
 
 function openConversionPixelsSidebar() {
@@ -238,6 +266,8 @@ function onConversionPixelsSaved() {
 function onAppClick(app) {
     if (app.id === 'webhook') {
         openWebhookSidebar();
+    } else if (app.id === 'external_checkout') {
+        openExternalCheckoutSidebar();
     } else if (app.id === 'utmify') {
         openUtmifySidebar();
     } else if (app.id === 'spedy') {
@@ -415,6 +445,12 @@ watch(() => page.url, () => syncGatewayFromQuery());
             :products="products"
             @close="closeConversionPixelsSidebar"
             @saved="onConversionPixelsSaved"
+        />
+        <ExternalCheckoutSidebar
+            :open="externalCheckoutSidebarOpen"
+            :endpoints="external_checkout_endpoints"
+            @close="closeExternalCheckoutSidebar"
+            @saved="onExternalCheckoutSaved"
         />
 
         <!-- Plugin sidebars (ex.: AutoZap) -->

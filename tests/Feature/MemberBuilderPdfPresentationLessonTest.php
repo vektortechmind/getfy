@@ -71,4 +71,61 @@ class MemberBuilderPdfPresentationLessonTest extends TestCase
         $this->assertSame($pdfUrl, $lesson->content_files[0]['url'] ?? null);
         $this->assertSame('dummy.pdf', $lesson->content_files[0]['name'] ?? null);
     }
+
+    public function test_store_lesson_pdf_presentation_accepts_relative_storage_url(): void
+    {
+        $this->withoutMiddleware(EnsureInstalled::class);
+
+        $owner = User::factory()->create([
+            'role' => User::ROLE_INFOPRODUTOR,
+            'tenant_id' => 1,
+        ]);
+
+        $product = $this->createTestProduct([
+            'type' => Product::TYPE_AREA_MEMBROS,
+            'checkout_slug' => 'pdfrel'.substr(uniqid('', true), -8),
+        ]);
+
+        $section = MemberSection::create([
+            'product_id' => $product->id,
+            'title' => 'Seção',
+            'position' => 1,
+            'cover_mode' => 'vertical',
+            'section_type' => 'courses',
+        ]);
+
+        $module = MemberModule::create([
+            'member_section_id' => $section->id,
+            'product_id' => $product->id,
+            'title' => 'Módulo',
+            'position' => 1,
+        ]);
+
+        $storageUrl = '/storage/member-area/'.$product->id.'/test-upload.pdf';
+
+        $response = $this->actingAs($owner)->postJson(
+            route('member-builder.lessons.store', ['produto' => $product, 'module' => $module]),
+            [
+                'title' => 'Leitor storage relativo',
+                'type' => MemberLesson::TYPE_PDF_READER,
+                'content_url' => '',
+                'content_files' => [
+                    ['url' => $storageUrl, 'name' => 'test-upload.pdf'],
+                ],
+                'link_title' => '',
+                'release_after_days' => null,
+                'release_at_date' => null,
+                'content_text' => '',
+                'duration_seconds' => 0,
+                'is_free' => false,
+                'watermark_enabled' => false,
+            ]
+        );
+
+        $response->assertOk();
+        $lesson = MemberLesson::where('member_module_id', $module->id)->first();
+        $this->assertNotNull($lesson);
+        $this->assertSame($storageUrl, $lesson->content_url);
+        $this->assertSame($storageUrl, $lesson->content_files[0]['url'] ?? null);
+    }
 }

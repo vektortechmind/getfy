@@ -30,8 +30,12 @@ class PushSubscriptionsMultiDeviceTest extends TestCase
             'keys' => ['auth' => 'CCC+/=', 'p256dh' => 'DDD+/='],
         ];
 
-        $this->actingAs($user)->postJson('/painel/push-subscribe', $payload1)->assertStatus(200);
-        $this->actingAs($user)->postJson('/painel/push-subscribe', $payload2)->assertStatus(200);
+        $this->actingAs($user)->postJson('/painel/push-subscribe', $payload1, [
+            'User-Agent' => 'GetfyTestDevice/Phone',
+        ])->assertStatus(200);
+        $this->actingAs($user)->postJson('/painel/push-subscribe', $payload2, [
+            'User-Agent' => 'GetfyTestDevice/Desktop',
+        ])->assertStatus(200);
 
         $this->assertSame(2, PanelPushSubscription::where('user_id', $user->id)->count());
         $this->assertNotNull(PanelPushSubscription::where('endpoint', $payload1['endpoint'])->first());

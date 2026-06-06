@@ -44,8 +44,7 @@ class NetAmountCalculator
             return round(($gross * $percent / 100) + $fixed, 2);
         }
 
-        $defaults = config('commissions.default_gateway_fees', []);
-        $cfg = $defaults[$method] ?? $defaults['pix'] ?? ['percent' => 0, 'fixed_cents' => 0];
+        $cfg = GatewayFeeSetting::defaultsFor($gatewaySlug, $method);
         $percent = (float) ($cfg['percent'] ?? 0);
         $fixed = ((int) ($cfg['fixed_cents'] ?? 0)) / 100;
 

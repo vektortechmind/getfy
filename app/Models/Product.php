@@ -566,6 +566,7 @@ class Product extends Model
                 ],
             ],
             'login' => [
+                'template' => 'v1',
                 'logo' => '',
                 'background_image' => '',
                 'background_color' => '#18181b',

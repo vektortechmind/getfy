@@ -2,6 +2,9 @@
 import { computed } from 'vue';
 import { MessageSquare } from 'lucide-vue-next';
 import { getCommunityPageIconComponent } from '@/utils/communityPageIcons';
+import { COMMUNITY_BANNER_ASPECT_CLASS, COMMUNITY_BANNER_CONTAINER_CLASS, COMMUNITY_BANNER_IMAGE_CLASS } from '@/utils/communityBanner';
+import MemberAreaSplitLoginLayout from '@/components/member-area/MemberAreaSplitLoginLayout.vue';
+import MemberAreaLoginForm from '@/components/member-area/MemberAreaLoginForm.vue';
 
 const props = defineProps({
     mode: { type: String, default: 'area' },
@@ -27,6 +30,18 @@ const heroGradient = 'linear-gradient(135deg, var(--ma-primary) 0%, #27272a 100%
 const headerLogo = computed(() => props.config?.header?.logo_url ?? null);
 const sidebar = computed(() => props.config?.sidebar ?? {});
 const login = computed(() => props.config?.login ?? {});
+const isLoginV2 = computed(() => (login.value.template || 'v1') === 'v2');
+const loginPreviewProduct = computed(() => ({
+    logo_light: login.value.logo || '',
+    logo_dark: login.value.logo || '',
+    title: login.value.title || 'Área de Membros',
+    subtitle: login.value.subtitle || 'Entre com seu e-mail e senha',
+    primary_color: login.value.primary_color || '#0ea5e9',
+    background_image: login.value.background_image || '',
+    login_without_password: login.value.login_without_password ?? false,
+    template: login.value.template || 'v1',
+    name: props.productName || login.value.title || 'Área de Membros',
+}));
 
 const sidebarItems = computed(() => sidebar.value?.items ?? [
     { title: 'Início', icon: 'home', link: '/', open_external: false },
@@ -328,7 +343,24 @@ const certOverlayOpacity = computed(() => {
 
         <!-- Login — preview idêntico à tela real (MemberAreaApp/Login.vue) -->
         <template v-else-if="mode === 'login'">
+            <MemberAreaSplitLoginLayout
+                v-if="isLoginV2"
+                preview
+                form-side="right"
+                :logo-light="loginPreviewProduct.logo_light"
+                :logo-dark="loginPreviewProduct.logo_dark"
+                :hero-image="loginPreviewProduct.background_image"
+                :primary="loginPreviewProduct.primary_color"
+                :hero-title="loginPreviewProduct.title"
+                :hero-subtitle="loginPreviewProduct.subtitle"
+                :app-name="loginPreviewProduct.name"
+                :form-heading="loginPreviewProduct.title"
+                :form-subheading="loginPreviewProduct.subtitle"
+            >
+                <MemberAreaLoginForm slug="preview" :product="loginPreviewProduct" variant="v2" preview />
+            </MemberAreaSplitLoginLayout>
             <div
+                v-else
                 class="relative flex min-h-full h-full w-full flex-col items-center justify-center bg-cover bg-center px-4 py-12"
                 :style="{
                     '--ma-primary': login.primary_color || '#0ea5e9',
@@ -387,69 +419,61 @@ const certOverlayOpacity = computed(() => {
                 </div>
             </div>
         </template>
-
-        <!-- Comunidade — preview idêntico à tela real (MemberAreaApp/Comunidade.vue): páginas criadas, mesmo layout e cores -->
         <template v-else-if="mode === 'comunidade'">
-            <div class="flex min-h-[500px] w-full flex-col gap-6 overflow-auto p-6 lg:flex-row lg:gap-8">
-                <!-- Sidebar: lista de páginas — igual à área real -->
-                <aside class="w-full shrink-0 rounded-2xl border border-zinc-700 bg-zinc-800/50 shadow-lg lg:w-72">
-                    <div class="border-b border-zinc-700 p-4">
-                        <h2 class="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-                            <MessageSquare class="h-4 w-4" />
-                            Páginas
-                        </h2>
-                    </div>
-                    <nav class="p-2">
-                        <div
-                            v-for="p in communityPages"
-                            :key="p.id"
-                            class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-zinc-300 transition"
-                        >
-                            <template v-if="p.icon">
-                                <component v-if="getCommunityPageIconComponent(p.icon)" :is="getCommunityPageIconComponent(p.icon)" class="h-5 w-5 shrink-0 text-[var(--ma-primary)]" />
-                                <span v-else class="text-xl leading-none">{{ p.icon }}</span>
-                            </template>
-                            <img v-else-if="p.banner_url" :src="p.banner_url" :alt="p.title" class="h-8 w-10 shrink-0 rounded-lg object-cover" />
-                            <span v-else class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ma-primary)]/20">
-                                <MessageSquare class="h-4 w-4 text-[var(--ma-primary)]" />
-                            </span>
-                            <span class="truncate">{{ p.title }}</span>
+            <div class="flex min-h-[500px] w-full flex-col gap-4 overflow-auto p-4 lg:flex-row lg:items-stretch lg:justify-start lg:gap-5">
+                <aside class="hidden rounded-2xl bg-zinc-800/50 ring-1 ring-zinc-700/50 lg:block">
+                    <div class="border-b border-zinc-700/50 p-3">
+                        <div class="flex items-center gap-2">
+                            <div class="h-8 w-8 rounded-lg bg-zinc-700/80" />
+                            <div class="min-w-0 flex-1 space-y-1">
+                                <div class="h-2.5 w-20 rounded bg-zinc-700/80" />
+                                <div class="h-2 w-24 rounded bg-zinc-700/50" />
+                            </div>
                         </div>
-                        <p v-if="!communityPages.length" class="px-3 py-4 text-xs text-zinc-500">Nenhuma página. Crie uma no painel à esquerda.</p>
-                    </nav>
+                    </div>
+                    <div class="space-y-1 p-2">
+                        <div v-for="p in communityPages.slice(0, 4)" :key="p.id" class="flex items-center gap-2 rounded-lg px-2 py-1.5">
+                            <MessageSquare class="h-3.5 w-3.5 shrink-0 text-[var(--ma-primary)]" />
+                            <span class="truncate text-xs text-zinc-300">{{ p.title }}</span>
+                        </div>
+                        <p v-if="!communityPages.length" class="px-2 py-3 text-xs text-zinc-500">Nenhuma página.</p>
+                    </div>
                 </aside>
-                <!-- Conteúdo principal — igual à área real -->
-                <main class="min-w-0 flex-1 space-y-8">
+                <main class="w-full max-w-[520px] shrink-0 space-y-4 lg:w-[520px]">
                     <div>
-                        <h1 class="text-3xl font-bold text-white">Comunidade</h1>
-                        <p class="mt-2 text-zinc-400">Escolha uma página ao lado ou acesse diretamente:</p>
+                        <h1 class="text-xl font-bold text-white">Comunidade</h1>
+                        <p class="mt-1 text-xs text-zinc-400">Feed central estreito</p>
                     </div>
-                    <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-3">
                         <div
-                            v-for="p in communityPages"
+                            v-for="p in communityPages.slice(0, 2)"
                             :key="'card-' + p.id"
-                            class="group relative overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-800/50 shadow-lg transition hover:border-[var(--ma-primary)]/40 hover:shadow-xl"
+                            class="overflow-hidden rounded-xl bg-zinc-800/50 ring-1 ring-zinc-700/50"
                         >
-                            <div v-if="p.banner_url" class="aspect-[2/1] w-full bg-zinc-700">
-                                <img :src="p.banner_url" :alt="p.title" class="h-full w-full object-cover transition group-hover:scale-[1.02]" />
+                            <div v-if="p.banner_url" :class="[COMMUNITY_BANNER_ASPECT_CLASS, 'relative w-full overflow-hidden bg-zinc-900/80']">
+                                <img :src="p.banner_url" :alt="p.title" :class="COMMUNITY_BANNER_IMAGE_CLASS" />
                             </div>
-                            <div class="flex items-center gap-4 p-4">
-                                <template v-if="p.icon">
-                                    <span v-if="getCommunityPageIconComponent(p.icon)" class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--ma-primary)]/20">
-                                        <component :is="getCommunityPageIconComponent(p.icon)" class="h-6 w-6 text-[var(--ma-primary)]" />
-                                    </span>
-                                    <span v-else class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--ma-primary)]/20 text-2xl">{{ p.icon }}</span>
-                                </template>
-                                <img v-else-if="p.banner_url" :src="p.banner_url" :alt="p.title" class="h-12 w-12 shrink-0 rounded-xl object-cover" />
-                                <div v-else class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--ma-primary)]/20">
-                                    <MessageSquare class="h-6 w-6 text-[var(--ma-primary)]" />
-                                </div>
-                                <span class="font-semibold text-zinc-200 group-hover:text-white">{{ p.title }}</span>
+                            <div class="flex items-center gap-3 p-3">
+                                <MessageSquare class="h-4 w-4 text-[var(--ma-primary)]" />
+                                <span class="text-sm font-medium text-zinc-200">{{ p.title }}</span>
                             </div>
                         </div>
                     </div>
-                    <p v-if="!communityPages.length" class="rounded-xl border border-zinc-700 bg-zinc-800/30 p-6 text-center text-sm text-zinc-500">Adicione páginas da comunidade no painel à esquerda para vê-las aqui.</p>
+                    <p v-if="!communityPages.length" class="rounded-xl bg-zinc-800/30 p-4 text-center text-xs text-zinc-500">Adicione páginas no painel à esquerda.</p>
                 </main>
+                <aside class="hidden w-56 shrink-0 space-y-3 lg:block">
+                    <div class="rounded-xl bg-zinc-800/50 p-3 ring-1 ring-zinc-700/50">
+                        <p class="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Em destaque</p>
+                        <div class="mt-2 space-y-2">
+                            <div class="h-8 rounded-lg bg-zinc-700/40" />
+                            <div class="h-8 rounded-lg bg-zinc-700/30" />
+                        </div>
+                    </div>
+                    <div class="rounded-xl bg-zinc-800/50 p-3 ring-1 ring-zinc-700/50">
+                        <p class="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Outras páginas</p>
+                        <div class="mt-2 h-16 rounded-lg bg-zinc-700/30" />
+                    </div>
+                </aside>
             </div>
         </template>
     </div>

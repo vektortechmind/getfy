@@ -2,6 +2,7 @@
 import { ref, computed, reactive, nextTick, onMounted, watch } from 'vue';
 import axios from 'axios';
 import MemberBuilderPreview from '@/components/member-builder/MemberBuilderPreview.vue';
+import MemberBuilderModulesTab from '@/components/member-builder/MemberBuilderModulesTab.vue';
 import Button from '@/components/ui/Button.vue';
 import Toggle from '@/components/ui/Toggle.vue';
 import {
@@ -38,6 +39,7 @@ import {
     communityPageEmojis,
     getCommunityPageIconComponent,
 } from '@/utils/communityPageIcons';
+import { COMMUNITY_BANNER_CONTAINER_CLASS, COMMUNITY_BANNER_IMAGE_CLASS, COMMUNITY_BANNER_RECOMMENDED } from '@/utils/communityBanner';
 
 const props = defineProps({
     produto: { type: Object, required: true },
@@ -138,6 +140,7 @@ const defaultConfig = () => ({
     logos: props.produto.member_area_config?.logos ?? {},
     sidebar: { collapsible: false, items: [], ...props.produto.member_area_config?.sidebar },
     login: {
+        template: 'v1',
         title: '',
         subtitle: '',
         primary_color: '#0ea5e9',
@@ -173,7 +176,7 @@ const configForm = reactive({
 const tabs = [
     { id: 'aparencia', label: 'Aparência', icon: Palette, hasPreview: true, previewMode: 'area' },
     { id: 'header', label: 'Header', icon: LayoutList, hasPreview: true, previewMode: 'area' },
-    { id: 'modulos', label: 'Módulos', icon: Layers, hasPreview: true, previewMode: 'area' },
+    { id: 'modulos', label: 'Módulos e Aulas', icon: Layers, hasPreview: true, previewMode: 'area' },
     { id: 'turmas', label: 'Turmas', icon: Users, hasPreview: false },
     { id: 'progresso', label: 'Progresso', icon: BarChart3, hasPreview: false },
     { id: 'comentarios', label: 'Comentários', icon: MessageSquare, hasPreview: false },
@@ -198,6 +201,53 @@ const loginAccessMode = computed({
 const currentTab = computed(() => tabs.find((t) => t.id === activeTab.value));
 const showPreview = computed(() => currentTab.value?.hasPreview ?? false);
 const previewMode = computed(() => currentTab.value?.previewMode ?? 'area');
+
+const modulosPreviewOpen = ref(true);
+try {
+    const savedPreview = localStorage.getItem(`member_builder_modulos_preview_${props.produto.id}`);
+    if (savedPreview === '0') modulosPreviewOpen.value = false;
+} catch (_) {}
+watch(modulosPreviewOpen, (open) => {
+    try { localStorage.setItem(`member_builder_modulos_preview_${props.produto.id}`, open ? '1' : '0'); } catch (_) {}
+});
+
+function cloneMemberSectionsStructure(sections) {
+    try {
+        const parsed = JSON.parse(JSON.stringify(sections ?? []));
+        for (const s of parsed) {
+            if (!Array.isArray(s.modules)) s.modules = [];
+            for (const m of s.modules) {
+                if (!Array.isArray(m.lessons)) m.lessons = [];
+            }
+        }
+        return parsed;
+    } catch {
+        return [];
+    }
+}
+
+const courseStructureSections = ref(cloneMemberSectionsStructure(props.produto.sections));
+
+watch(
+    () => props.produto.sections,
+    (next) => {
+        courseStructureSections.value = cloneMemberSectionsStructure(next);
+    },
+    { deep: true },
+);
+
+const modulosSelectedSectionId = ref(null);
+const modulosSelectedModuleId = ref(null);
+
+const effectiveShowPreview = computed(() => {
+    if (!showPreview.value) return false;
+    if (activeTab.value === 'modulos') return modulosPreviewOpen.value;
+    return true;
+});
+
+const previewSections = computed(() =>
+    activeTab.value === 'modulos' ? courseStructureSections.value : (props.produto.sections ?? []),
+);
 
 const tabIds = tabs.map((t) => t.id);
 
@@ -267,13 +317,27 @@ watch(activeTab, (id) => {
 });
 
 watch(
-    [activeTab, () => props.produto.sections],
+    [activeTab, () => courseStructureSections.value],
     () => {
-        if (activeTab.value === 'modulos' && (props.produto.sections?.length ?? 0) > 0) {
-            expandAllModulos();
+        if (activeTab.value !== 'modulos') return;
+        if (!courseStructureSections.value.length) {
+            modulosSelectedSectionId.value = null;
+            modulosSelectedModuleId.value = null;
+            return;
+        }
+        if (!modulosSelectedSectionId.value || !courseStructureSections.value.some((s) => s.id === modulosSelectedSectionId.value)) {
+            modulosSelectedSectionId.value = courseStructureSections.value[0].id;
+        }
+        const section = courseStructureSections.value.find((s) => s.id === modulosSelectedSectionId.value);
+        if (section?.modules?.length) {
+            if (!modulosSelectedModuleId.value || !section.modules.some((m) => m.id === modulosSelectedModuleId.value)) {
+                modulosSelectedModuleId.value = section.modules[0].id;
+            }
+        } else {
+            modulosSelectedModuleId.value = null;
         }
     },
-    { immediate: true }
+    { immediate: true },
 );
 
 const headerItems = computed({
@@ -533,11 +597,12 @@ const editingSectionId = ref(null);
 const editingModuleId = ref(null);
 
 // Módulos: painel direito (aulas do módulo + formulário nova/editar)
-const modulosSelectedModuleId = ref(null);
 const modulosLessonForm = ref(null);
 const modulosLessonFormSaving = ref(false);
 const lessonPdfFileInput = ref(null);
 const lessonPdfUploading = ref(false);
+const lessonSupportFileInput = ref(null);
+const lessonSupportUploading = ref(false);
 
 /** Material (download), apresentação ou leitor PDF — mesmos campos no backend. */
 function isLessonPdfContentType(type) {
@@ -553,7 +618,7 @@ function pdfLessonFileLabel(type) {
 const modulosSelectedModule = computed(() => {
     const id = modulosSelectedModuleId.value;
     if (!id) return null;
-    for (const s of props.produto.sections ?? []) {
+    for (const s of courseStructureSections.value ?? []) {
         const mod = s.modules?.find((m) => m.id === id);
         if (mod) return mod;
     }
@@ -563,6 +628,30 @@ const modulosSelectedModule = computed(() => {
 function selectModuleForAulas(moduleId) {
     modulosSelectedModuleId.value = moduleId;
     modulosLessonForm.value = null;
+}
+
+function normalizeLessonFileList(files, defaultName = 'Material') {
+    const list = Array.isArray(files) ? files : [];
+    return list
+        .map((it) => {
+            if (typeof it === 'string') return { url: it, name: defaultName };
+            const url = (it?.url ?? '').toString().trim();
+            if (!url) return null;
+            return { url, name: (it?.name ?? defaultName).toString() };
+        })
+        .filter(Boolean);
+}
+
+function normalizeUsefulLinkList(links) {
+    const list = Array.isArray(links) ? links : [];
+    return list
+        .map((it) => {
+            const url = (it?.url ?? '').toString().trim();
+            if (!url) return null;
+            const title = (it?.title ?? '').toString().trim();
+            return { url, title: title || 'Link' };
+        })
+        .filter(Boolean);
 }
 
 function openModulosLessonForm(lesson) {
@@ -584,6 +673,8 @@ function openModulosLessonForm(lesson) {
             ...lesson,
             watermark_enabled: !!lesson.watermark_enabled,
             content_files: normalizedFiles,
+            support_files: normalizeLessonFileList(lesson.support_files, 'Material de apoio'),
+            useful_links: normalizeUsefulLinkList(lesson.useful_links),
             release_mode: lesson.release_at_date ? 'date' : (lesson.release_after_days ? 'days' : 'none'),
             release_after_days: lesson.release_after_days ? String(lesson.release_after_days) : '',
             release_at_date: lesson.release_at_date || '',
@@ -595,6 +686,8 @@ function openModulosLessonForm(lesson) {
             content_url: '',
             link_title: '',
             content_files: [],
+            support_files: [],
+            useful_links: [],
             content_text: '',
             watermark_enabled: false,
             release_mode: 'none',
@@ -651,12 +744,77 @@ function removeLessonPdfAt(index) {
     modulosLessonForm.value.content_url = first || '';
 }
 
+async function onSupportPdfChange(event) {
+    const files = Array.from(event.target?.files ?? []);
+    if (!files.length || !modulosLessonForm.value) return;
+    lessonSupportUploading.value = true;
+    try {
+        if (!Array.isArray(modulosLessonForm.value.support_files)) modulosLessonForm.value.support_files = [];
+        for (const file of files) {
+            if (!file) continue;
+            if (file.type !== 'application/pdf') {
+                alert('Selecione apenas arquivos em formato PDF.');
+                continue;
+            }
+            const formData = new FormData();
+            formData.append('file', file);
+            const { data } = await axios.post(uploadPdfUrl.value, formData, { headers: uploadHeaders() });
+            if (data?.url) {
+                modulosLessonForm.value.support_files.push({ url: data.url, name: file.name });
+            }
+        }
+    } catch (e) {
+        const msg = e.response?.data?.message ?? e.message ?? `Erro ao enviar material. Tamanho máx. ${uploadLimits.value.pdf_max_mb} MB.`;
+        alert(msg);
+    } finally {
+        lessonSupportUploading.value = false;
+        if (lessonSupportFileInput.value) lessonSupportFileInput.value.value = '';
+    }
+}
+
+function clearSupportFiles() {
+    if (modulosLessonForm.value) modulosLessonForm.value.support_files = [];
+    if (lessonSupportFileInput.value) lessonSupportFileInput.value.value = '';
+}
+
+function removeSupportFileAt(index) {
+    if (!modulosLessonForm.value || !Array.isArray(modulosLessonForm.value.support_files)) return;
+    modulosLessonForm.value.support_files.splice(index, 1);
+}
+
+function addUsefulLink() {
+    if (!modulosLessonForm.value) return;
+    if (!Array.isArray(modulosLessonForm.value.useful_links)) modulosLessonForm.value.useful_links = [];
+    modulosLessonForm.value.useful_links.push({ title: '', url: '' });
+}
+
+function removeUsefulLinkAt(index) {
+    if (!modulosLessonForm.value || !Array.isArray(modulosLessonForm.value.useful_links)) return;
+    modulosLessonForm.value.useful_links.splice(index, 1);
+}
+
 function lessonPayload(form) {
     const contentFiles = Array.isArray(form.content_files)
         ? form.content_files
               .map((it) => ({
                   url: (it?.url ?? '').toString().trim(),
                   name: (it?.name ?? '').toString().trim(),
+              }))
+              .filter((it) => it.url)
+        : [];
+    const supportFiles = Array.isArray(form.support_files)
+        ? form.support_files
+              .map((it) => ({
+                  url: (it?.url ?? '').toString().trim(),
+                  name: (it?.name ?? '').toString().trim(),
+              }))
+              .filter((it) => it.url)
+        : [];
+    const usefulLinks = Array.isArray(form.useful_links)
+        ? form.useful_links
+              .map((it) => ({
+                  title: (it?.title ?? '').toString().trim(),
+                  url: (it?.url ?? '').toString().trim(),
               }))
               .filter((it) => it.url)
         : [];
@@ -675,6 +833,8 @@ function lessonPayload(form) {
         content_url: (isLessonPdfContentType(form.type) ? (firstFileUrl || form.content_url) : form.content_url) ?? '',
         link_title: form.link_title != null ? String(form.link_title).trim() : '',
         content_files: isLessonPdfContentType(form.type) ? contentFiles : [],
+        support_files: supportFiles,
+        useful_links: usefulLinks,
         release_after_days,
         release_at_date,
         content_text: form.content_text ?? '',
@@ -824,10 +984,9 @@ function openModuleEdit(mod) {
 }
 
 async function saveModuleTitle() {
-    const id = editingModuleId.value;
+    const id = editingModuleId.value ?? modulosSelectedModuleId.value;
     if (!id) return;
-    const mod = editingModule.value;
-    const section = props.produto.sections?.find((s) => s.modules?.some((m) => m.id === id));
+    const section = courseStructureSections.value?.find((s) => s.modules?.some((m) => m.id === id));
     const sectionType = section?.section_type ?? 'courses';
     const payload = { title: editingModuleTitle.value };
     if (sectionType === 'courses') {
@@ -871,7 +1030,7 @@ async function setModuleShowTitleOnCover(value) {
 const editingModule = computed(() => {
     const id = editingModuleId.value;
     if (!id) return null;
-    for (const s of props.produto.sections ?? []) {
+    for (const s of courseStructureSections.value ?? []) {
         const mod = s.modules?.find((m) => m.id === id);
         if (mod) return mod;
     }
@@ -879,9 +1038,9 @@ const editingModule = computed(() => {
 });
 
 const editingModuleSection = computed(() => {
-    const id = editingModuleId.value;
+    const id = editingModuleId.value ?? modulosSelectedModuleId.value;
     if (!id) return null;
-    return props.produto.sections?.find((s) => s.modules?.some((m) => m.id === id)) ?? null;
+    return courseStructureSections.value?.find((s) => s.modules?.some((m) => m.id === id)) ?? null;
 });
 
 const moduleThumbnailUploading = ref(false);
@@ -889,7 +1048,7 @@ const moduleThumbnailFileInput = ref(null);
 
 async function onModuleThumbnailChange(event) {
     const file = event.target?.files?.[0];
-    const id = editingModuleId.value;
+    const id = editingModuleId.value ?? modulosSelectedModuleId.value;
     if (!file || !file.type.startsWith('image/') || !id) return;
     moduleThumbnailUploading.value = true;
     try {
@@ -908,7 +1067,7 @@ async function onModuleThumbnailChange(event) {
 }
 
 function removeModuleThumbnail() {
-    const id = editingModuleId.value;
+    const id = editingModuleId.value ?? modulosSelectedModuleId.value;
     if (!id) return;
     axios.put(`${base.value}/modules/${id}`, { thumbnail: '' }, { headers: headers() }).then(() => reload()).catch(() => {});
 }
@@ -919,6 +1078,71 @@ const headers = () => ({
     'Content-Type': 'application/json',
     'X-Requested-With': 'XMLHttpRequest',
 });
+
+const memberReorderSaving = ref(false);
+
+function memberReorderIdsEqual(a, b) {
+    return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
+async function persistMemberStructureReorder(body) {
+    if (memberReorderSaving.value) return;
+    memberReorderSaving.value = true;
+    try {
+        await axios.post(`${base.value}/reorder`, body, { headers: headers() });
+        previewKey.value++;
+    } catch (_) {
+        courseStructureSections.value = cloneMemberSectionsStructure(props.produto.sections);
+    } finally {
+        memberReorderSaving.value = false;
+    }
+}
+
+function onMemberSectionsReorderEnd() {
+    const ids = courseStructureSections.value.map((s) => s.id);
+    const original = (props.produto.sections ?? []).map((s) => s.id);
+    if (memberReorderIdsEqual(ids, original)) return;
+    persistMemberStructureReorder({ scope: 'sections', ordered_ids: ids });
+}
+
+function onMemberModulesReorderEnd(sectionId) {
+    const section = courseStructureSections.value.find((s) => s.id === sectionId);
+    if (!section?.modules) return;
+    const ids = section.modules.map((m) => m.id);
+    const origSection = (props.produto.sections ?? []).find((s) => s.id === sectionId);
+    const origIds = (origSection?.modules ?? []).map((m) => m.id);
+    if (memberReorderIdsEqual(ids, origIds)) return;
+    persistMemberStructureReorder({ scope: 'modules', section_id: sectionId, ordered_ids: ids });
+}
+
+function onMemberLessonsReorderEnd() {
+    const mid = modulosSelectedModuleId.value;
+    if (!mid || !modulosSelectedModule.value?.lessons) return;
+    const ids = modulosSelectedModule.value.lessons.map((l) => l.id);
+    const origMod = (props.produto.sections ?? []).flatMap((s) => s.modules ?? []).find((m) => m.id === mid);
+    const origIds = (origMod?.lessons ?? []).map((l) => l.id);
+    if (memberReorderIdsEqual(ids, origIds)) return;
+    persistMemberStructureReorder({ scope: 'lessons', module_id: mid, ordered_ids: ids });
+}
+
+function handleModulesTabOpenModuleEdit(mod) {
+    modulosSelectedModuleId.value = mod.id;
+    modulosLessonForm.value = null;
+    openModuleEdit(mod);
+}
+
+watch(
+    [activeTab, modulosSelectedModuleId],
+    ([tab, id]) => {
+        if (tab !== 'modulos' || !id) return;
+        const mod = modulosSelectedModule.value;
+        if (mod) openModuleEdit(mod);
+    },
+);
+
+function handleModulesTabEditSection(section) {
+    openSectionEdit(section);
+}
 
 async function saveConfig() {
     processing.value = true;
@@ -1235,7 +1459,8 @@ async function deleteSection(sectionId) {
     });
 }
 function openModuleModal(sectionId) {
-    const section = props.produto.sections?.find((s) => s.id === sectionId);
+    const section = courseStructureSections.value?.find((s) => s.id === sectionId)
+        ?? props.produto.sections?.find((s) => s.id === sectionId);
     moduleModalSectionId.value = sectionId;
     moduleModalSectionType.value = section?.section_type ?? 'courses';
     moduleModalCoverMode.value = section?.cover_mode ?? 'vertical';
@@ -1546,6 +1771,7 @@ const communityPageModalTitle = ref('');
 const communityPageModalIcon = ref('');
 const communityPageModalPublic = ref(true);
 const communityPageModalDefault = ref(false);
+const communityPageModalFeatured = ref(false);
 const communityPageModalSaving = ref(false);
 const communityPageModalBannerPath = ref('');
 const communityPageModalBannerPreviewUrl = ref('');
@@ -1556,20 +1782,23 @@ const communityPageModalBannerInputRef = ref(null);
 const communityPageIconPickerOpen = ref(null);
 
 function openCommunityPageModal(page = null) {
-    communityPageModalEditing.value = page ?? null;
-    if (page) {
-        communityPageModalTitle.value = page.title ?? '';
-        communityPageModalIcon.value = page.icon ?? '';
-        communityPageModalPublic.value = page.is_public_posting !== false;
-        communityPageModalDefault.value = page.is_default === true;
-        communityPageModalBannerPath.value = page.banner ?? '';
-        communityPageModalBannerPreviewUrl.value = page.banner_url ?? '';
+    const editing = page && page.id != null ? page : null;
+    communityPageModalEditing.value = editing;
+    if (editing) {
+        communityPageModalTitle.value = editing.title ?? '';
+        communityPageModalIcon.value = editing.icon ?? '';
+        communityPageModalPublic.value = editing.is_public_posting !== false;
+        communityPageModalDefault.value = editing.is_default === true;
+        communityPageModalFeatured.value = editing.is_featured === true;
+        communityPageModalBannerPath.value = editing.banner ?? '';
+        communityPageModalBannerPreviewUrl.value = editing.banner_url ?? '';
         communityPageModalBannerFile.value = null;
     } else {
         communityPageModalTitle.value = '';
         communityPageModalIcon.value = '';
         communityPageModalPublic.value = true;
         communityPageModalDefault.value = false;
+        communityPageModalFeatured.value = false;
         communityPageModalBannerPath.value = '';
         communityPageModalBannerPreviewUrl.value = '';
         communityPageModalBannerFile.value = null;
@@ -1582,6 +1811,7 @@ function closeCommunityPageModal() {
     communityPageModalTitle.value = '';
     communityPageModalIcon.value = '';
     communityPageModalDefault.value = false;
+    communityPageModalFeatured.value = false;
     communityPageIconPickerOpen.value = null;
     communityPageModalBannerPath.value = '';
     communityPageModalBannerPreviewUrl.value = '';
@@ -1641,9 +1871,10 @@ async function saveCommunityPageModal() {
             banner: banner || null,
             is_public_posting: communityPageModalPublic.value,
             is_default: communityPageModalDefault.value,
+            is_featured: communityPageModalFeatured.value,
         };
         let res;
-        if (editing) {
+        if (editing?.id != null) {
             res = await axios.put(`${base.value}/community-pages/${editing.id}`, payload, { headers: headers() });
         } else {
             res = await axios.post(`${base.value}/community-pages`, payload, { headers: headers() });
@@ -1724,14 +1955,13 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
         </header>
 
         <!-- Conteúdo: sidebar config + preview (preview só em lg+) -->
-        <div :class="['flex min-h-0 flex-1 flex-col overflow-hidden', showPreview ? 'lg:flex-row' : '']">
+        <div :class="['flex min-h-0 flex-1 flex-col overflow-hidden', effectiveShowPreview ? 'lg:flex-row' : '']">
             <aside
                 :class="[
                     'flex min-h-0 min-w-0 flex-col border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900',
                     'lg:shrink-0',
-                    showPreview ? 'lg:w-80 lg:border-b-0 lg:border-r lg:overflow-y-auto' : 'flex-1 w-full overflow-x-hidden',
-                    activeTab === 'modulos' && showPreview ? 'lg:w-[44rem]' : '',
-                    activeTab === 'modulos' && !showPreview ? 'flex-1 overflow-hidden' : '',
+                    effectiveShowPreview && activeTab !== 'modulos' ? 'lg:w-80 lg:border-b-0 lg:border-r lg:overflow-y-auto' : 'flex-1 w-full min-w-0 overflow-hidden',
+                    activeTab === 'modulos' ? 'flex-1' : '',
                 ]"
             >
                 <!-- Container rolável: garante scroll no mobile (altura limitada) -->
@@ -1911,6 +2141,37 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
 
                     <template v-else-if="activeTab === 'login'">
                         <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Tela de login</h2>
+                        <div class="mb-5">
+                            <p class="mb-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">Template</p>
+                            <div class="grid gap-3 sm:grid-cols-2">
+                                <button
+                                    type="button"
+                                    :class="[
+                                        'rounded-xl border p-4 text-left transition',
+                                        (configForm.member_area_config.login.template || 'v1') === 'v1'
+                                            ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5 ring-1 ring-[var(--color-primary)]'
+                                            : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-700 dark:hover:border-zinc-600',
+                                    ]"
+                                    @click="configForm.member_area_config.login.template = 'v1'"
+                                >
+                                    <p class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Template v1</p>
+                                    <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Card centralizado (atual)</p>
+                                </button>
+                                <button
+                                    type="button"
+                                    :class="[
+                                        'rounded-xl border p-4 text-left transition',
+                                        configForm.member_area_config.login.template === 'v2'
+                                            ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5 ring-1 ring-[var(--color-primary)]'
+                                            : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-700 dark:hover:border-zinc-600',
+                                    ]"
+                                    @click="configForm.member_area_config.login.template = 'v2'"
+                                >
+                                    <p class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Template v2</p>
+                                    <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Split estilo plataforma — login à direita</p>
+                                </button>
+                            </div>
+                        </div>
                         <div class="space-y-4">
                             <div>
                                 <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Logo</label>
@@ -1927,7 +2188,9 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                 </Button>
                             </div>
                             <div>
-                                <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Imagem de fundo</label>
+                                <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                                    {{ configForm.member_area_config.login.template === 'v2' ? 'Imagem do hero (lado esquerdo)' : 'Imagem de fundo' }}
+                                </label>
                                 <input ref="loginBackgroundFileInput" type="file" accept="image/*" class="hidden" @change="onLoginBackgroundChange" />
                                 <div v-if="configForm.member_area_config.login.background_image" class="space-y-2">
                                     <img :src="configForm.member_area_config.login.background_image" alt="Fundo login" class="h-24 w-full rounded-lg object-cover bg-zinc-100 dark:bg-zinc-800" />
@@ -1940,7 +2203,7 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                     Enviar imagem de fundo
                                 </Button>
                             </div>
-                            <div>
+                            <div v-if="configForm.member_area_config.login.template !== 'v2'">
                                 <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Cor de fundo (sem imagem)</label>
                                 <div class="flex items-center gap-2">
                                     <input v-model="configForm.member_area_config.login.background_color" type="color" class="h-9 w-20 cursor-pointer rounded-lg border dark:border-zinc-600" />
@@ -1988,468 +2251,76 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
 
                     <template v-else-if="activeTab === 'modulos'">
                         <input ref="moduleThumbnailFileInput" type="file" accept="image/*" class="hidden" @change="onModuleThumbnailChange" />
-                        <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:flex-row">
-                            <div class="min-w-0 flex-1 overflow-y-auto overflow-x-hidden pr-2">
-                        <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Estrutura do curso</h2>
-                        <p class="mb-3 text-xs text-zinc-500 dark:text-zinc-400">Seções agrupam módulos. Clique em um módulo (ou em &quot;Aulas&quot;) para ver e editar aulas no painel à direita.</p>
-                        <div class="mb-3 flex flex-wrap items-center gap-2">
-                            <Button size="sm" @click="openSectionModal"><Plus class="mr-1.5 h-4 w-4" /> Nova seção</Button>
-                            <span class="text-zinc-400 dark:text-zinc-500">|</span>
-                            <button type="button" class="text-xs text-zinc-500 underline hover:text-zinc-700 dark:hover:text-zinc-300" @click="expandAllModulos">Expandir tudo</button>
-                            <button type="button" class="text-xs text-zinc-500 underline hover:text-zinc-700 dark:hover:text-zinc-300" @click="collapseAllModulos">Recolher tudo</button>
-                        </div>
-                        <div class="space-y-2">
-                            <template v-for="section in produto.sections" :key="section.id">
-                                <div class="min-w-0 rounded-lg border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
-                                    <div class="flex min-w-0 items-start gap-2 py-2 px-3">
-                                        <button type="button" class="mt-0.5 shrink-0 rounded p-0.5 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300" @click="toggleSection(section.id)" aria-label="Expandir ou recolher">
-                                            <ChevronRight v-if="!expandedSections.has(section.id)" class="h-4 w-4" />
-                                            <ChevronDown v-else class="h-4 w-4" />
-                                        </button>
-                                        <div class="min-w-0 flex-1 flex flex-col gap-2">
-                                            <!-- Tags sempre em cima -->
-                                            <div class="flex flex-wrap items-center gap-1.5">
-                                                <span class="inline-flex shrink-0 items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400">
-                                                    <FolderOpen class="h-3 w-3" /> Seção
-                                                </span>
-                                                <span class="shrink-0 rounded bg-zinc-200 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-600 dark:text-zinc-300">{{ sectionTypeLabel(section.section_type ?? 'courses') }}</span>
-                                            </div>
-                                            <!-- Conteúdo: edição ou visualização -->
-                                            <template v-if="editingSectionId === section.id">
-                                                <input v-model="editingSectionTitle" type="text" :class="inputClass" class="!py-1.5 !text-sm min-w-0 w-full" placeholder="Título da seção" @keydown.enter="saveSectionTitle" @keydown.escape="cancelEdit" />
-                                                <div class="space-y-1.5">
-                                                    <span class="block text-xs font-medium text-zinc-600 dark:text-zinc-400">Modo de capa dos módulos</span>
-                                                    <div class="flex flex-wrap items-center gap-2">
-                                                        <button
-                                                            type="button"
-                                                            :aria-pressed="editingSectionCoverMode === 'vertical'"
-                                                            :class="editingSectionCoverMode === 'vertical'
-                                                                ? 'border-sky-500 bg-sky-500/10 ring-1 ring-sky-500/30 dark:bg-sky-500/15'
-                                                                : 'border-zinc-200 dark:border-zinc-600 hover:bg-zinc-50 dark:hover:bg-zinc-800/60'"
-                                                            class="flex flex-col items-center gap-1 rounded-lg border-2 p-2 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-1"
-                                                            @click="editingSectionCoverMode = 'vertical'"
-                                                        >
-                                                            <div class="aspect-[2/3] w-8 rounded bg-gradient-to-b from-zinc-400 to-zinc-500 dark:from-zinc-500 dark:to-zinc-600" aria-hidden="true" />
-                                                            <span class="text-[10px] font-medium text-zinc-600 dark:text-zinc-300">Vertical</span>
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            :aria-pressed="editingSectionCoverMode === 'horizontal'"
-                                                            :class="editingSectionCoverMode === 'horizontal'
-                                                                ? 'border-sky-500 bg-sky-500/10 ring-1 ring-sky-500/30 dark:bg-sky-500/15'
-                                                                : 'border-zinc-200 dark:border-zinc-600 hover:bg-zinc-50 dark:hover:bg-zinc-800/60'"
-                                                            class="flex flex-col items-center gap-1 rounded-lg border-2 p-2 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-1"
-                                                            @click="editingSectionCoverMode = 'horizontal'"
-                                                        >
-                                                            <div class="aspect-video w-10 rounded bg-gradient-to-r from-zinc-400 to-zinc-500 dark:from-zinc-500 dark:to-zinc-600" aria-hidden="true" />
-                                                            <span class="text-[10px] font-medium text-zinc-600 dark:text-zinc-300">Banner</span>
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                                <div class="flex flex-wrap items-center gap-2 pt-0.5">
-                                                    <Button size="sm" class="shrink-0" @click="saveSectionTitle">Ok</Button>
-                                                    <Button size="sm" variant="ghost" @click="cancelEdit">Cancelar</Button>
-                                                </div>
-                                            </template>
-                                            <template v-else>
-                                                <div class="flex min-w-0 items-center justify-between gap-2">
-                                                    <span class="min-w-0 truncate cursor-pointer text-sm font-medium text-zinc-800 dark:text-zinc-200" @click="toggleSection(section.id)">{{ section.title }}</span>
-                                                    <div class="flex shrink-0 items-center gap-1">
-                                                        <button type="button" class="rounded p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-300" title="Editar seção" @click.stop="openSectionEdit(section)"><Pencil class="h-3.5 w-3.5" /></button>
-                                                        <Button size="sm" variant="outline" class="!py-1 !text-xs" @click.stop="openModuleModal(section.id)">+ Módulo</Button>
-                                                        <button type="button" class="rounded p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" title="Remover seção" @click.stop="deleteSection(section.id)"><Trash2 class="h-3.5 w-3.5" /></button>
-                                                    </div>
-                                                </div>
-                                            </template>
-                                        </div>
-                                    </div>
-                                    <div v-if="expandedSections.has(section.id)" class="min-w-0 border-t border-zinc-200 bg-zinc-50/50 px-3 pb-3 pt-2 dark:border-zinc-700 dark:bg-zinc-800/30">
-                                        <!-- Seção tipo Cursos/Aulas: grid de cards de módulos -->
-                                        <template v-if="(section.section_type ?? 'courses') === 'courses'">
-                                            <div class="grid grid-cols-3 gap-2">
-                                                <div
-                                                    v-for="mod in section.modules"
-                                                    :key="mod.id"
-                                                    class="flex flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm transition dark:border-zinc-700 dark:bg-zinc-800/80"
-                                                    :class="{ 'ring-2 ring-sky-500/50 dark:ring-sky-400/40': modulosSelectedModuleId === mod.id }"
-                                                >
-                                                    <button type="button" class="flex min-w-0 flex-1 flex-col items-stretch text-left" @click="selectModuleForAulas(mod.id)">
-                                                        <div class="h-14 w-full shrink-0 overflow-hidden bg-zinc-200 dark:bg-zinc-700">
-                                                            <img v-if="mod.thumbnail" :src="mod.thumbnail" :alt="mod.title" class="h-full w-full object-cover" />
-                                                            <div v-else class="flex h-full w-full items-center justify-center text-zinc-400 dark:text-zinc-500">
-                                                                <BookOpen class="h-5 w-5" />
-                                                            </div>
-                                                        </div>
-                                                        <div class="min-w-0 flex-1 p-1.5">
-                                                            <p class="truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">{{ mod.title }}</p>
-                                                            <p class="text-[10px] text-zinc-500 dark:text-zinc-400">{{ (mod.lessons?.length ?? 0) }} {{ (mod.lessons?.length ?? 0) === 1 ? 'aula' : 'aulas' }}</p>
-                                                        </div>
-                                                    </button>
-                                                    <div class="flex items-center gap-0.5 border-t border-zinc-200 p-1 dark:border-zinc-700">
-                                                        <Button size="sm" variant="outline" class="!py-0.5 !text-[10px] flex-1 min-w-0" @click.stop="selectModuleForAulas(mod.id)">Aulas</Button>
-                                                        <button type="button" class="rounded p-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-300" title="Editar módulo" @click.stop="openModuleEdit(mod)"><Pencil class="h-3 w-3" /></button>
-                                                        <button type="button" class="rounded p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" title="Remover módulo" @click.stop="deleteModule(mod.id)"><Trash2 class="h-3 w-3" /></button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <!-- Edição do módulo (quando editingModuleId está neste módulo da seção) -->
-                                            <template v-for="mod in section.modules" :key="'edit-' + mod.id">
-                                                <div v-if="editingModuleId === mod.id" class="mt-3 rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-600 dark:bg-zinc-800/50">
-                                                    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-                                                        <p class="text-xs font-medium text-zinc-600 dark:text-zinc-400">Editar módulo</p>
-                                                        <Toggle
-                                                            :model-value="editingModuleShowTitleOnCover"
-                                                            label="Mostrar título na capa"
-                                                            class="!mb-0"
-                                                            @update:model-value="(v) => { editingModuleShowTitleOnCover = v; setModuleShowTitleOnCover(v); }"
-                                                        />
-                                                    </div>
-                                                    <div class="mb-3">
-                                                        <input v-model="editingModuleTitle" type="text" :class="inputClass" class="!py-1.5 !text-sm w-full" placeholder="Título do módulo" @keydown.enter="saveModuleTitle" @keydown.escape="cancelEdit" />
-                                                    </div>
-                                                    <div class="mb-3">
-                                                        <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Liberação</label>
-                                                        <div class="grid gap-2 sm:grid-cols-3">
-                                                            <select v-model="editingModuleReleaseMode" :class="inputClass" class="!py-1.5 !text-xs w-full">
-                                                                <option value="none">Imediata</option>
-                                                                <option value="days">Após X dias</option>
-                                                                <option value="date">Na data</option>
-                                                            </select>
-                                                            <input
-                                                                v-if="editingModuleReleaseMode === 'days'"
-                                                                v-model="editingModuleReleaseAfterDays"
-                                                                type="number"
-                                                                min="1"
-                                                                step="1"
-                                                                :class="inputClass"
-                                                                class="!py-1.5 !text-xs w-full"
-                                                                placeholder="Ex.: 7"
-                                                            />
-                                                            <input
-                                                                v-else-if="editingModuleReleaseMode === 'date'"
-                                                                v-model="editingModuleReleaseAtDate"
-                                                                type="date"
-                                                                :class="inputClass"
-                                                                class="!py-1.5 !text-xs w-full"
-                                                            />
-                                                            <div v-else class="hidden sm:block" />
-                                                        </div>
-                                                    </div>
-                                                    <div v-if="editingModule?.thumbnail" class="mb-3 flex items-center gap-3">
-                                                        <div :class="section.cover_mode === 'horizontal' ? 'aspect-video w-24 shrink-0' : 'aspect-[2/3] h-20 w-14 shrink-0'" class="overflow-hidden rounded-lg shadow-sm">
-                                                            <img :src="editingModule.thumbnail" alt="Capa" class="h-full w-full object-cover" />
-                                                        </div>
-                                                        <div class="flex flex-wrap gap-2">
-                                                            <Button type="button" size="sm" variant="outline" class="!py-1 !text-xs" :disabled="moduleThumbnailUploading" @click="moduleThumbnailFileInput?.click()">Trocar imagem</Button>
-                                                            <Button type="button" size="sm" variant="ghost" class="!py-1 !text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" :disabled="moduleThumbnailUploading" @click="removeModuleThumbnail">Remover</Button>
-                                                        </div>
-                                                    </div>
-                                                    <template v-else>
-                                                        <div class="mb-3 flex flex-wrap items-center gap-2">
-                                                            <Button type="button" size="sm" variant="outline" class="!py-1.5 !text-xs" :disabled="moduleThumbnailUploading" @click="moduleThumbnailFileInput?.click()">
-                                                                {{ moduleThumbnailUploading ? 'Enviando…' : 'Enviar capa' }}
-                                                            </Button>
-                                                            <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ section.cover_mode === 'horizontal' ? 'Banner.' : 'Vertical.' }} Máx. {{ uploadLimits.image_max_mb }} MB.</span>
-                                                        </div>
-                                                    </template>
-                                                    <div class="flex gap-2">
-                                                        <Button size="sm" @click="saveModuleTitle">Ok</Button>
-                                                        <Button size="sm" variant="ghost" @click="cancelEdit">Cancelar</Button>
-                                                    </div>
-                                                </div>
-                                            </template>
-                                        </template>
-                                        <!-- Seção tipo Outros produtos -->
-                                        <template v-else-if="(section.section_type ?? 'courses') === 'products'">
-                                            <template v-for="mod in section.modules" :key="mod.id">
-                                                <div class="ml-2 mt-2 min-w-0 rounded-md border border-zinc-200 bg-white/80 dark:border-zinc-600 dark:bg-zinc-800/50">
-                                                    <div class="flex min-w-0 flex-wrap items-center gap-2 py-1.5 px-2">
-                                                        <span class="flex shrink-0 items-center gap-1 rounded bg-zinc-100/80 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"><ShoppingBag class="h-3 w-3" /> Produto</span>
-                                                        <template v-if="editingModuleId === mod.id">
-                                                            <div class="flex min-w-0 flex-1 flex-col gap-2">
-                                                                <input v-model="editingModuleTitle" type="text" :class="inputClass" class="!py-1.5 !text-xs min-w-0 w-full" placeholder="Título" @keydown.enter="saveModuleTitle" @keydown.escape="cancelEdit" />
-                                                                <select v-model="editingModuleRelatedProductId" :class="inputClass" class="!py-1.5 !text-xs min-w-0 w-full">
-                                                                    <option :value="null">Selecione o produto</option>
-                                                                    <option v-for="p in tenant_products" :key="p.id" :value="p.id">{{ p.name }}</option>
-                                                                </select>
-                                                                <div class="flex flex-wrap items-center gap-2">
-                                                                    <select v-model="editingModuleAccessType" :class="inputClass" class="!py-1 !text-xs w-full min-w-0 sm:w-auto">
-                                                                        <option value="paid">Pago</option>
-                                                                        <option value="free">Liberado</option>
-                                                                    </select>
-                                                                    <Button size="sm" class="!py-0.5 !text-xs shrink-0" @click="saveModuleTitle">Ok</Button>
-                                                                    <Button size="sm" variant="ghost" class="!py-0.5 !text-xs shrink-0" @click="cancelEdit">Cancelar</Button>
-                                                                </div>
-                                                            </div>
-                                                        </template>
-                                                        <template v-else>
-                                                            <span class="min-w-0 flex-1 truncate text-xs font-medium text-zinc-700 dark:text-zinc-300">{{ mod.title }}</span>
-                                                            <span class="shrink-0 truncate text-xs text-zinc-500 dark:text-zinc-400" :title="mod.related_product?.name">{{ mod.related_product?.name ?? '#' + mod.related_product_id }}</span>
-                                                            <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium" :class="mod.access_type === 'free' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'">{{ mod.access_type === 'free' ? 'Liberado' : 'Pago' }}</span>
-                                                            <div class="flex shrink-0 items-center gap-0.5">
-                                                                <button type="button" class="rounded p-1 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-700" title="Editar" @click.stop="openModuleEdit(mod)"><Pencil class="h-3 w-3" /></button>
-                                                                <button type="button" class="rounded p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" title="Remover" @click.stop="deleteModule(mod.id)"><Trash2 class="h-3 w-3" /></button>
-                                                            </div>
-                                                        </template>
-                                                    </div>
-                                                    <!-- Capa do módulo (Outros produtos) -->
-                                                    <div v-if="editingModuleId === mod.id" class="ml-6 mt-2 rounded-lg border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-600 dark:bg-zinc-800/50">
-                                                        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-                                                            <p class="text-xs font-medium text-zinc-600 dark:text-zinc-400">Capa do módulo ({{ (section.cover_mode === 'horizontal' ? 'banner' : 'vertical') }})</p>
-                                                            <Toggle
-                                                                :model-value="editingModuleShowTitleOnCover"
-                                                                label="Mostrar título na capa"
-                                                                class="!mb-0"
-                                                                @update:model-value="(v) => { editingModuleShowTitleOnCover = v; setModuleShowTitleOnCover(v); }"
-                                                            />
-                                                        </div>
-                                                        <div v-if="editingModule?.thumbnail" class="flex items-center gap-3">
-                                                            <div :class="section.cover_mode === 'horizontal' ? 'aspect-video w-24 shrink-0' : 'aspect-[2/3] h-20 w-14 shrink-0'" class="overflow-hidden rounded-lg shadow-sm">
-                                                                <img :src="editingModule.thumbnail" alt="Capa" class="h-full w-full object-cover" />
-                                                            </div>
-                                                            <div class="flex flex-wrap gap-2">
-                                                                <Button type="button" size="sm" variant="outline" class="!py-1 !text-xs" :disabled="moduleThumbnailUploading" @click="moduleThumbnailFileInput?.click()">Trocar imagem</Button>
-                                                                <Button type="button" size="sm" variant="ghost" class="!py-1 !text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" :disabled="moduleThumbnailUploading" @click="removeModuleThumbnail">Remover</Button>
-                                                            </div>
-                                                        </div>
-                                                        <template v-else>
-                                                            <div class="flex flex-wrap items-center gap-2">
-                                                                <Button type="button" size="sm" variant="outline" class="!py-1.5 !text-xs" :disabled="moduleThumbnailUploading" @click="moduleThumbnailFileInput?.click()">
-                                                                    {{ moduleThumbnailUploading ? 'Enviando…' : 'Enviar capa' }}
-                                                                </Button>
-                                                                <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ section.cover_mode === 'horizontal' ? 'Recomendado: 1200×630 px (banner).' : 'Recomendado: 400×600 px (vertical).' }} Máx. {{ uploadLimits.image_max_mb }} MB.</span>
-                                                            </div>
-                                                        </template>
-                                                    </div>
-                                                </div>
-                                            </template>
-                                        </template>
-                                        <!-- Seção tipo Links externos -->
-                                        <template v-else>
-                                            <template v-for="mod in section.modules" :key="mod.id">
-                                                <div class="ml-2 mt-2 min-w-0 rounded-md border border-zinc-200 bg-white/80 dark:border-zinc-600 dark:bg-zinc-800/50">
-                                                    <div class="flex min-w-0 flex-wrap items-center gap-2 py-1.5 px-2">
-                                                        <span class="flex shrink-0 items-center gap-1 rounded bg-zinc-100/80 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"><ExternalLink class="h-3 w-3" /> Link</span>
-                                                        <template v-if="editingModuleId === mod.id">
-                                                            <div class="flex min-w-0 flex-1 flex-col gap-2">
-                                                                <input v-model="editingModuleTitle" type="text" :class="inputClass" class="!py-1.5 !text-xs min-w-0 w-full" placeholder="Título" @keydown.enter="saveModuleTitle" @keydown.escape="cancelEdit" />
-                                                                <input v-model="editingModuleExternalUrl" type="url" :class="inputClass" class="!py-1.5 !text-xs min-w-0 w-full" placeholder="https://..." />
-                                                                <div class="flex flex-wrap items-center gap-2">
-                                                                    <Button size="sm" class="!py-0.5 !text-xs shrink-0" @click="saveModuleTitle">Ok</Button>
-                                                                    <Button size="sm" variant="ghost" class="!py-0.5 !text-xs shrink-0" @click="cancelEdit">Cancelar</Button>
-                                                                </div>
-                                                            </div>
-                                                        </template>
-                                                        <template v-else>
-                                                            <span class="min-w-0 flex-1 truncate text-xs font-medium text-zinc-700 dark:text-zinc-300">{{ mod.title }}</span>
-                                                            <a :href="mod.external_url" target="_blank" rel="noopener" class="min-w-0 max-w-[50%] truncate text-xs text-sky-600 hover:underline dark:text-sky-400" :title="mod.external_url">{{ mod.external_url }}</a>
-                                                            <div class="flex shrink-0 items-center gap-0.5">
-                                                                <button type="button" class="rounded p-1 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-700" title="Editar" @click.stop="openModuleEdit(mod)"><Pencil class="h-3 w-3" /></button>
-                                                                <button type="button" class="rounded p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" title="Remover" @click.stop="deleteModule(mod.id)"><Trash2 class="h-3 w-3" /></button>
-                                                            </div>
-                                                        </template>
-                                                    </div>
-                                                    <!-- Capa do módulo (Links externos) -->
-                                                    <div v-if="editingModuleId === mod.id" class="ml-6 mt-2 rounded-lg border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-600 dark:bg-zinc-800/50">
-                                                        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-                                                            <p class="text-xs font-medium text-zinc-600 dark:text-zinc-400">Capa do módulo ({{ (section.cover_mode === 'horizontal' ? 'banner' : 'vertical') }})</p>
-                                                            <Toggle
-                                                                :model-value="editingModuleShowTitleOnCover"
-                                                                label="Mostrar título na capa"
-                                                                class="!mb-0"
-                                                                @update:model-value="(v) => { editingModuleShowTitleOnCover = v; setModuleShowTitleOnCover(v); }"
-                                                            />
-                                                        </div>
-                                                        <div v-if="editingModule?.thumbnail" class="flex items-center gap-3">
-                                                            <div :class="section.cover_mode === 'horizontal' ? 'aspect-video w-24 shrink-0' : 'aspect-[2/3] h-20 w-14 shrink-0'" class="overflow-hidden rounded-lg shadow-sm">
-                                                                <img :src="editingModule.thumbnail" alt="Capa" class="h-full w-full object-cover" />
-                                                            </div>
-                                                            <div class="flex flex-wrap gap-2">
-                                                                <Button type="button" size="sm" variant="outline" class="!py-1 !text-xs" :disabled="moduleThumbnailUploading" @click="moduleThumbnailFileInput?.click()">Trocar imagem</Button>
-                                                                <Button type="button" size="sm" variant="ghost" class="!py-1 !text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" :disabled="moduleThumbnailUploading" @click="removeModuleThumbnail">Remover</Button>
-                                                            </div>
-                                                        </div>
-                                                        <template v-else>
-                                                            <div class="flex flex-wrap items-center gap-2">
-                                                                <Button type="button" size="sm" variant="outline" class="!py-1.5 !text-xs" :disabled="moduleThumbnailUploading" @click="moduleThumbnailFileInput?.click()">
-                                                                    {{ moduleThumbnailUploading ? 'Enviando…' : 'Enviar capa' }}
-                                                                </Button>
-                                                                <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ section.cover_mode === 'horizontal' ? 'Recomendado: 1200×630 px (banner).' : 'Recomendado: 400×600 px (vertical).' }} Máx. {{ uploadLimits.image_max_mb }} MB.</span>
-                                                            </div>
-                                                        </template>
-                                                    </div>
-                                                </div>
-                                            </template>
-                                        </template>
-                                        <p v-if="!section.modules?.length" class="ml-4 mt-2 text-xs text-zinc-400 dark:text-zinc-500">Nenhum módulo. Clique em + Módulo.</p>
-                                    </div>
-                                </div>
-                            </template>
-                            <p v-if="!produto.sections?.length" class="rounded-lg border border-dashed border-zinc-300 py-6 text-center text-sm text-zinc-500 dark:border-zinc-600 dark:text-zinc-400">Nenhuma seção. Clique em &quot;Nova seção&quot; para começar.</p>
-                        </div>
-                            </div>
-
-                            <!-- Backdrop mobile: fecha o sidebar ao clicar (só abaixo de lg) -->
-                            <div
-                                v-if="modulosSelectedModuleId"
-                                class="fixed inset-0 z-30 bg-black/50 lg:hidden"
-                                aria-hidden="true"
-                                @click="modulosSelectedModuleId = null; closeModulosLessonForm()"
-                            />
-
-                            <!-- Sidebar direito: aulas do módulo + formulário (overlay no mobile, coluna no lg) -->
-                            <aside
-                                v-if="modulosSelectedModuleId"
-                                class="fixed inset-y-0 right-0 z-40 flex w-full max-w-[20rem] flex-col rounded-l-xl border-l border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900 lg:static lg:inset-auto lg:max-w-none lg:w-64 lg:min-h-0 lg:shrink-0 lg:rounded-l-lg lg:border-t lg:border-zinc-200 lg:bg-zinc-50/50 lg:shadow-none dark:lg:bg-zinc-800/30 lg:min-h-[20rem] lg:border-l lg:border-t-0"
-                            >
-                                <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4">
-                                    <div class="mb-3 flex items-center justify-between gap-2">
-                                        <h3 class="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Aulas do módulo</h3>
-                                        <button type="button" class="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-600 dark:hover:text-zinc-300" title="Fechar" @click="modulosSelectedModuleId = null; closeModulosLessonForm()"><X class="h-4 w-4" /></button>
-                                    </div>
-                                    <p v-if="modulosSelectedModule" class="mb-3 truncate text-xs text-zinc-500 dark:text-zinc-400">{{ modulosSelectedModule.title }}</p>
-
-                                    <template v-if="!modulosLessonForm">
-                                        <ul class="space-y-1">
-                                            <li
-                                                v-for="lesson in (modulosSelectedModule?.lessons ?? [])"
-                                                :key="lesson.id"
-                                                class="flex cursor-pointer items-center justify-between gap-2 rounded-lg py-2 px-2 text-sm transition hover:bg-zinc-200/80 dark:hover:bg-zinc-700/50"
-                                                @click="openModulosLessonForm(lesson)"
-                                            >
-                                                <span class="flex min-w-0 flex-1 items-center gap-2 truncate">
-                                                    <FileVideo v-if="lesson.type === 'video'" class="h-4 w-4 shrink-0 text-zinc-500" />
-                                                    <Link v-else-if="lesson.type === 'link'" class="h-4 w-4 shrink-0 text-zinc-500" />
-                                                    <Presentation v-else-if="lesson.type === 'pdf_presentation'" class="h-4 w-4 shrink-0 text-zinc-500" />
-                                                    <BookOpen v-else-if="lesson.type === 'pdf_reader'" class="h-4 w-4 shrink-0 text-zinc-500" />
-                                                    <FileText v-else-if="lesson.type === 'pdf'" class="h-4 w-4 shrink-0 text-zinc-500" />
-                                                    <FileText v-else class="h-4 w-4 shrink-0 text-zinc-500" />
-                                                    <span class="truncate text-zinc-700 dark:text-zinc-300">{{ lesson.title || 'Sem título' }}</span>
-                                                </span>
-                                                <button type="button" class="shrink-0 rounded p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" title="Remover aula" @click.stop="deleteLesson(lesson.id)"><Trash2 class="h-3 w-3" /></button>
-                                            </li>
-                                        </ul>
-                                        <p v-if="!modulosSelectedModule?.lessons?.length" class="py-3 text-xs text-zinc-500 dark:text-zinc-400">Nenhuma aula neste módulo.</p>
-                                        <Button size="sm" class="mt-3 w-full" @click="openModulosLessonForm(null)">
-                                            <Plus class="mr-2 h-4 w-4" />
-                                            Nova aula
-                                        </Button>
-                                    </template>
-
-                                    <template v-else>
-                                        <div class="space-y-3">
-                                            <div>
-                                                <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Título</label>
-                                                <input v-model="modulosLessonForm.title" type="text" :class="inputClass" class="w-full" placeholder="Título da aula" />
-                                            </div>
-                                            <div>
-                                                <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Tipo</label>
-                                                <select v-model="modulosLessonForm.type" :class="inputClass" class="w-full">
-                                                    <option value="video">Vídeo</option>
-                                                    <option value="link">Link</option>
-                                                    <option value="pdf">Material</option>
-                                                    <option value="pdf_presentation">Apresentação (PDF)</option>
-                                                    <option value="pdf_reader">Leitor de PDF</option>
-                                                    <option value="text">Texto</option>
-                                                </select>
-                                            </div>
-                                            <div>
-                                                <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Liberação</label>
-                                                <div class="grid gap-2">
-                                                    <select v-model="modulosLessonForm.release_mode" :class="inputClass" class="w-full">
-                                                        <option value="none">Imediata</option>
-                                                        <option value="days">Após X dias</option>
-                                                        <option value="date">Na data</option>
-                                                    </select>
-                                                    <input
-                                                        v-if="modulosLessonForm.release_mode === 'days'"
-                                                        v-model="modulosLessonForm.release_after_days"
-                                                        type="number"
-                                                        min="1"
-                                                        step="1"
-                                                        :class="inputClass"
-                                                        class="w-full"
-                                                        placeholder="Ex.: 7"
-                                                    />
-                                                    <input
-                                                        v-else-if="modulosLessonForm.release_mode === 'date'"
-                                                        v-model="modulosLessonForm.release_at_date"
-                                                        type="date"
-                                                        :class="inputClass"
-                                                        class="w-full"
-                                                    />
-                                                </div>
-                                            </div>
-                                            <div v-if="modulosLessonForm.type === 'link'">
-                                                <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Título do link</label>
-                                                <input v-model="modulosLessonForm.link_title" type="text" :class="inputClass" class="w-full" placeholder="Ex: Abrir material complementar" />
-                                            </div>
-                                            <div v-if="modulosLessonForm.type === 'video' || modulosLessonForm.type === 'link' || modulosLessonForm.type === 'pdf' || modulosLessonForm.type === 'pdf_presentation' || modulosLessonForm.type === 'pdf_reader'">
-                                                <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">URL do conteúdo</label>
-                                                <input v-model="modulosLessonForm.content_url" type="url" :class="inputClass" class="w-full" placeholder="https://..." />
-                                                <p v-if="modulosLessonForm.type === 'video'" class="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-                                                    Aceita links do YouTube, Vimeo, Wistia, Loom e outras plataformas de vídeo compatíveis.
-                                                </p>
-                                            </div>
-                                            <div v-if="modulosLessonForm.type === 'pdf' || modulosLessonForm.type === 'pdf_presentation' || modulosLessonForm.type === 'pdf_reader'" class="space-y-2">
-                                                <input ref="lessonPdfFileInput" type="file" accept=".pdf,application/pdf" multiple class="hidden" @change="onLessonPdfChange" />
-                                                <label class="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                                                    {{
-                                                        modulosLessonForm.type === 'pdf_presentation'
-                                                            ? 'Enviar arquivo (apresentação)'
-                                                            : modulosLessonForm.type === 'pdf_reader'
-                                                              ? 'Enviar arquivo (leitor de PDF)'
-                                                              : 'Enviar arquivo (material)'
-                                                    }}
-                                                </label>
-                                                <div class="flex flex-wrap items-center gap-2">
-                                                    <Button type="button" size="sm" variant="outline" :disabled="lessonPdfUploading" @click="lessonPdfFileInput?.click()">
-                                                        {{
-                                                            lessonPdfUploading
-                                                                ? 'Enviando…'
-                                                                : modulosLessonForm.type === 'pdf' ? 'Selecionar materiais' : 'Selecionar PDFs'
-                                                        }}
-                                                    </Button>
-                                                    <span v-if="(modulosLessonForm.content_files?.length ?? 0) > 0" class="text-xs text-zinc-500 dark:text-zinc-400">
-                                                        {{ modulosLessonForm.content_files.length }} arquivo(s) anexado(s)
-                                                    </span>
-                                                    <button v-if="(modulosLessonForm.content_files?.length ?? 0) > 0" type="button" class="text-xs text-red-600 hover:underline" @click="clearLessonPdf">Remover todos</button>
-                                                </div>
-                                                <div v-if="(modulosLessonForm.content_files?.length ?? 0) > 0" class="space-y-1">
-                                                    <div
-                                                        v-for="(f, i) in modulosLessonForm.content_files"
-                                                        :key="`${f.url}-${i}`"
-                                                        class="flex items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-800/50"
-                                                    >
-                                                        <span class="min-w-0 flex-1 truncate text-zinc-600 dark:text-zinc-300">{{ f.name || pdfLessonFileLabel(modulosLessonForm.type) }}</span>
-                                                        <button type="button" class="shrink-0 text-red-600 hover:underline" @click="removeLessonPdfAt(i)">Remover</button>
-                                                    </div>
-                                                </div>
-                                                <p class="text-xs text-zinc-500 dark:text-zinc-400">Ou use a URL acima se o material estiver hospedado em outro site. Máx. {{ uploadLimits.pdf_max_mb }} MB.</p>
-                                            </div>
-                                            <div v-if="modulosLessonForm.type === 'text'">
-                                                <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Texto</label>
-                                                <textarea v-model="modulosLessonForm.content_text" :class="inputClass" class="w-full" rows="3" placeholder="Conteúdo da aula..." />
-                                            </div>
-                                            <div v-if="modulosLessonForm.type === 'video' || modulosLessonForm.type === 'link' || modulosLessonForm.type === 'pdf' || modulosLessonForm.type === 'pdf_presentation' || modulosLessonForm.type === 'pdf_reader'">
-                                                <label class="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Descrição</label>
-                                                <textarea v-model="modulosLessonForm.content_text" :class="inputClass" class="w-full" rows="3" placeholder="Texto ou links para complementar a aula (opcional)..." />
-                                            </div>
-                                            <div v-if="modulosLessonForm.type === 'video'" class="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-800/50">
-                                                <div class="flex items-center">
-                                                    <Toggle v-model="modulosLessonForm.watermark_enabled" label="Marca d'água (proteção DRM)" />
-                                                </div>
-                                            </div>
-                                            <div class="flex gap-2">
-                                                <Button variant="outline" size="sm" class="flex-1" @click="closeModulosLessonForm">Cancelar</Button>
-                                                <Button size="sm" class="flex-1" :disabled="modulosLessonFormSaving" @click="saveLessonFromSidebar">{{ modulosLessonFormSaving ? 'Salvando…' : 'Salvar' }}</Button>
-                                            </div>
-                                        </div>
-                                    </template>
-                                </div>
-                            </aside>
-                        </div>
-
+                        <input ref="lessonPdfFileInput" type="file" accept=".pdf,application/pdf" multiple class="hidden" @change="onLessonPdfChange" />
+                        <input ref="lessonSupportFileInput" type="file" accept=".pdf,application/pdf" multiple class="hidden" @change="onSupportPdfChange" />
+                        <MemberBuilderModulesTab
+                            v-model:sections="courseStructureSections"
+                            v-model:selected-section-id="modulosSelectedSectionId"
+                            v-model:selected-module-id="modulosSelectedModuleId"
+                            v-model:preview-open="modulosPreviewOpen"
+                            :tenant-products="tenant_products"
+                            :upload-limits="uploadLimits"
+                            :input-class="inputClass"
+                            :member-reorder-saving="memberReorderSaving"
+                            :section-type-label="sectionTypeLabel"
+                            :lesson-form="modulosLessonForm"
+                            :lesson-form-saving="modulosLessonFormSaving"
+                            :lesson-pdf-uploading="lessonPdfUploading"
+                            :lesson-support-uploading="lessonSupportUploading"
+                            :is-lesson-pdf-content-type="isLessonPdfContentType"
+                            :pdf-lesson-file-label="pdfLessonFileLabel"
+                            :editing-section-id="editingSectionId"
+                            :editing-section-title="editingSectionTitle"
+                            :editing-section-cover-mode="editingSectionCoverMode"
+                            :editing-module-id="editingModuleId"
+                            :editing-module-title="editingModuleTitle"
+                            :editing-module-show-title-on-cover="editingModuleShowTitleOnCover"
+                            :editing-module-related-product-id="editingModuleRelatedProductId"
+                            :editing-module-access-type="editingModuleAccessType"
+                            :editing-module-external-url="editingModuleExternalUrl"
+                            :editing-module-release-mode="editingModuleReleaseMode"
+                            :editing-module-release-after-days="editingModuleReleaseAfterDays"
+                            :editing-module-release-at-date="editingModuleReleaseAtDate"
+                            :editing-module-thumbnail="editingModule?.thumbnail"
+                            :module-thumbnail-uploading="moduleThumbnailUploading"
+                            @open-section-modal="openSectionModal"
+                            @open-module-modal="openModuleModal"
+                            @delete-section="deleteSection"
+                            @delete-module="deleteModule"
+                            @sections-reorder-end="onMemberSectionsReorderEnd"
+                            @modules-reorder-end="onMemberModulesReorderEnd"
+                            @lessons-reorder-end="onMemberLessonsReorderEnd"
+                            @edit-section="handleModulesTabEditSection"
+                            @save-section="saveSectionTitle"
+                            @cancel-section-edit="cancelEdit"
+                            @save-module="saveModuleTitle"
+                            @open-module-edit="handleModulesTabOpenModuleEdit"
+                            @open-lesson-form="openModulosLessonForm"
+                            @close-lesson-form="closeModulosLessonForm"
+                            @save-lesson="saveLessonFromSidebar"
+                            @delete-lesson="deleteLesson"
+                            @pick-lesson-pdf="lessonPdfFileInput?.click()"
+                            @pick-support-pdf="lessonSupportFileInput?.click()"
+                            @pick-module-thumbnail="moduleThumbnailFileInput?.click()"
+                            @remove-module-thumbnail="removeModuleThumbnail"
+                            @set-module-show-title-on-cover="setModuleShowTitleOnCover"
+                            @clear-lesson-pdf="clearLessonPdf"
+                            @remove-lesson-pdf-at="removeLessonPdfAt"
+                            @clear-support-files="clearSupportFiles"
+                            @remove-support-file-at="removeSupportFileAt"
+                            @add-useful-link="addUsefulLink"
+                            @remove-useful-link-at="removeUsefulLinkAt"
+                            @update:editing-section-title="editingSectionTitle = $event"
+                            @update:editing-section-cover-mode="editingSectionCoverMode = $event"
+                            @update:editing-module-title="editingModuleTitle = $event"
+                            @update:editing-module-show-title-on-cover="editingModuleShowTitleOnCover = $event"
+                            @update:editing-module-related-product-id="editingModuleRelatedProductId = $event"
+                            @update:editing-module-access-type="editingModuleAccessType = $event"
+                            @update:editing-module-external-url="editingModuleExternalUrl = $event"
+                            @update:editing-module-release-mode="editingModuleReleaseMode = $event"
+                            @update:editing-module-release-after-days="editingModuleReleaseAfterDays = $event"
+                            @update:editing-module-release-at-date="editingModuleReleaseAtDate = $event"
+                        />
                     </template>
 
                     <template v-else-if="activeTab === 'turmas'">
@@ -2680,7 +2551,7 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                         </div>
                         <div class="mt-6 flex items-center justify-between">
                             <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Páginas da comunidade</h3>
-                            <Button size="sm" @click="openCommunityPageModal">Nova página</Button>
+                            <Button size="sm" @click="openCommunityPageModal()">Nova página</Button>
                         </div>
                         <ul class="mt-2 space-y-2">
                             <li v-for="p in communityPagesList" :key="p.id" class="flex items-center justify-between gap-3 rounded-lg bg-zinc-50 py-2 px-3 text-sm dark:bg-zinc-800/50">
@@ -2692,6 +2563,7 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                     <img v-else-if="p.banner_url" :src="p.banner_url" :alt="p.title" class="h-8 w-12 shrink-0 rounded object-cover" />
                                     <span class="truncate">{{ p.title }}</span>
                                     <span v-if="p.is_default" class="shrink-0 rounded bg-[var(--color-primary)]/20 px-1.5 py-0.5 text-xs font-medium text-[var(--color-primary)]">padrão</span>
+                                    <span v-if="p.is_featured" class="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">destaque</span>
                                     <span class="shrink-0 text-zinc-500">({{ p.is_public_posting ? 'público' : 'privado' }})</span>
                                 </span>
                                 <span class="flex shrink-0 gap-1">
@@ -2910,26 +2782,7 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                         URL da área
                                     </h3>
                                     <div class="space-y-4">
-                                        <div>
-                                            <label class="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Tipo de URL</label>
-                                            <select v-model="configForm.domain_type" :class="inputClass" class="w-full">
-                                                <option value="path">Slug</option>
-                                                <option value="custom">Domínio</option>
-                                            </select>
-                                        </div>
-                                        <div v-if="configForm.domain_type === 'path'">
-                                            <label class="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Segmento da URL</label>
-                                            <input
-                                                v-model="configForm.domain_value"
-                                                type="text"
-                                                :class="inputClass"
-                                                class="w-full"
-                                                placeholder="Ex.: meucurso (6–16 letras/números)"
-                                                maxlength="16"
-                                            />
-                                            <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Vazio = {{ produto.checkout_slug }}</p>
-                                        </div>
-                                        <div v-else-if="configForm.domain_type === 'custom'">
+                                        <div v-if="configForm.domain_type === 'custom'">
                                             <label class="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Domínio ou subdomínio</label>
                                             <input v-model="configForm.domain_value" type="text" :class="inputClass" class="w-full" placeholder="membros.empresa.com ou area.empresa.com.br" />
                                             <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Ex.: membros.seudominio.com ou area.seudominio.com.br</p>
@@ -2955,6 +2808,18 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                                                 </ul>
                                                 <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">Após propagar o DNS, salve e acesse o link abaixo para testar.</p>
                                             </div>
+                                        </div>
+                                        <div v-else>
+                                            <label class="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Segmento da URL</label>
+                                            <input
+                                                v-model="configForm.domain_value"
+                                                type="text"
+                                                :class="inputClass"
+                                                class="w-full"
+                                                placeholder="Ex.: meucurso (6–16 letras/números)"
+                                                maxlength="16"
+                                            />
+                                            <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Vazio = {{ produto.checkout_slug }}</p>
                                         </div>
                                         <div class="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800">
                                             <p class="mb-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">Link completo</p>
@@ -3066,7 +2931,7 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
             </aside>
 
             <div
-                v-if="showPreview"
+                v-if="effectiveShowPreview"
                 class="hidden min-h-0 flex-1 flex-col overflow-hidden bg-zinc-200 p-4 dark:bg-zinc-900 lg:flex"
             >
                 <p class="mb-2 shrink-0 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Preview</p>
@@ -3076,7 +2941,7 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
                         :mode="previewMode"
                         :config="configForm.member_area_config"
                         :product-name="produto.name"
-                        :sections="produto.sections ?? []"
+                        :sections="previewSections"
                         :internal-products="produto.internal_products ?? []"
                         :progress-percent="0"
                         :continue-watching="null"
@@ -3550,142 +3415,164 @@ const inputClass = 'block w-full rounded-lg border border-zinc-300 bg-white px-3
             <!-- Modal Nova página da comunidade -->
             <div
                 v-if="communityPageModalOpen"
-                class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+                class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:items-center sm:p-6"
                 @click.self="closeCommunityPageModal"
             >
-                <div class="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-xl dark:bg-zinc-900" @click.stop>
-                    <div class="border-b border-zinc-200 px-5 py-4 dark:border-zinc-700">
+                <div
+                    class="my-auto flex w-full max-w-3xl max-h-[min(calc(100dvh-2rem),880px)] flex-col overflow-hidden rounded-2xl bg-white shadow-xl dark:bg-zinc-900"
+                    @click.stop
+                >
+                    <div class="shrink-0 border-b border-zinc-200 px-5 py-4 dark:border-zinc-700">
                         <h3 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{{ communityPageModalEditing ? 'Editar página' : 'Nova página da comunidade' }}</h3>
+                        <p class="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">Configure título, banner e permissões da página.</p>
                     </div>
-                    <div class="space-y-5 p-5">
-                        <div>
-                            <label class="mb-1.5 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Título da página</label>
-                            <input v-model="communityPageModalTitle" type="text" :class="inputClass" placeholder="Ex: Dúvidas, Anúncios..." class="w-full" />
-                        </div>
-                        <div>
-                            <label class="mb-1.5 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Ícone ou emoji</label>
-                            <div class="mb-2 flex items-center gap-2">
-                                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 text-xl dark:border-zinc-600 dark:bg-zinc-800">
-                                    <component v-if="communityPageModalIconComponent" :is="communityPageModalIconComponent" class="h-5 w-5 text-zinc-600 dark:text-zinc-300" />
-                                    <span v-else-if="communityPageModalIcon" class="leading-none">{{ communityPageModalIcon }}</span>
-                                    <span v-else class="text-zinc-400">—</span>
+                    <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+                        <div class="grid gap-5 lg:grid-cols-2 lg:gap-6">
+                            <div class="space-y-5">
+                                <div>
+                                    <label class="mb-1.5 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Título da página</label>
+                                    <input v-model="communityPageModalTitle" type="text" :class="inputClass" placeholder="Ex: Dúvidas, Anúncios..." class="w-full" />
                                 </div>
-                                <div class="flex flex-wrap gap-2">
-                                    <button
-                                        type="button"
-                                        :class="[
-                                            'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition',
-                                            communityPageIconPickerOpen === 'emoji'
-                                                ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] dark:bg-[var(--color-primary)]/20'
-                                                : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700',
-                                        ]"
-                                        @click="openIconPicker('emoji')"
-                                    >
-                                        Emojis
-                                    </button>
-                                    <button
-                                        type="button"
-                                        :class="[
-                                            'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition',
-                                            communityPageIconPickerOpen === 'icon'
-                                                ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] dark:bg-[var(--color-primary)]/20'
-                                                : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700',
-                                        ]"
-                                        @click="openIconPicker('icon')"
-                                    >
-                                        Ícones
-                                    </button>
+                                <div>
+                                    <label class="mb-1.5 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Ícone ou emoji</label>
+                                    <div class="mb-2 flex items-center gap-2">
+                                        <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 text-xl dark:border-zinc-600 dark:bg-zinc-800">
+                                            <component v-if="communityPageModalIconComponent" :is="communityPageModalIconComponent" class="h-5 w-5 text-zinc-600 dark:text-zinc-300" />
+                                            <span v-else-if="communityPageModalIcon" class="leading-none">{{ communityPageModalIcon }}</span>
+                                            <span v-else class="text-zinc-400">—</span>
+                                        </div>
+                                        <div class="flex flex-wrap gap-2">
+                                            <button
+                                                type="button"
+                                                :class="[
+                                                    'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition',
+                                                    communityPageIconPickerOpen === 'emoji'
+                                                        ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] dark:bg-[var(--color-primary)]/20'
+                                                        : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700',
+                                                ]"
+                                                @click="openIconPicker('emoji')"
+                                            >
+                                                Emojis
+                                            </button>
+                                            <button
+                                                type="button"
+                                                :class="[
+                                                    'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition',
+                                                    communityPageIconPickerOpen === 'icon'
+                                                        ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] dark:bg-[var(--color-primary)]/20'
+                                                        : 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-zinc-300 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700',
+                                                ]"
+                                                @click="openIconPicker('icon')"
+                                            >
+                                                Ícones
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div v-if="communityPageIconPickerOpen === 'emoji'" class="max-h-36 overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-600 dark:bg-zinc-800/80">
+                                        <div class="grid grid-cols-8 gap-1 sm:grid-cols-10">
+                                            <button
+                                                v-for="emoji in communityPageEmojis"
+                                                :key="emoji"
+                                                type="button"
+                                                class="flex h-8 w-8 items-center justify-center rounded-lg text-lg transition hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                                                :title="emoji"
+                                                @click="setCommunityPageModalEmoji(emoji)"
+                                            >
+                                                {{ emoji }}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div v-if="communityPageIconPickerOpen === 'icon'" class="max-h-36 overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-600 dark:bg-zinc-800/80">
+                                        <div class="grid grid-cols-6 gap-1 sm:grid-cols-8">
+                                            <button
+                                                v-for="name in communityPageIconNames"
+                                                :key="name"
+                                                type="button"
+                                                class="flex h-8 w-8 items-center justify-center rounded-lg transition hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                                                :title="name"
+                                                @click="setCommunityPageModalIcon(name)"
+                                            >
+                                                <component :is="communityPageIconComponents[name]" class="h-4 w-4 text-zinc-600 dark:text-zinc-300" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="mb-1.5 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Banner (opcional)</label>
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        class="hidden"
+                                        ref="communityPageModalBannerInputRef"
+                                        @change="onCommunityPageBannerChange"
+                                    />
+                                    <div v-if="communityPageModalBannerPreviewUrl" class="relative">
+                                        <div :class="COMMUNITY_BANNER_CONTAINER_CLASS">
+                                            <img :src="communityPageModalBannerPreviewUrl" alt="Preview" :class="COMMUNITY_BANNER_IMAGE_CLASS" />
+                                        </div>
+                                        <button type="button" class="absolute right-2 top-2 rounded-lg bg-black/60 px-2 py-1 text-xs text-white hover:bg-black/80" @click="clearCommunityPageBanner">Remover</button>
+                                    </div>
+                                    <Button v-else type="button" size="sm" variant="outline" class="w-full" :disabled="communityPageModalBannerUploading" @click="communityPageModalBannerInputRef?.click()">
+                                        {{ communityPageModalBannerUploading ? 'Enviando…' : 'Escolher imagem' }}
+                                    </Button>
+                                    <p class="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">Tamanho ideal: {{ COMMUNITY_BANNER_RECOMMENDED }}. Máx. {{ uploadLimits.image_max_mb }} MB.</p>
                                 </div>
                             </div>
-                            <!-- Painel Emojis -->
-                            <div v-if="communityPageIconPickerOpen === 'emoji'" class="max-h-48 overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-600 dark:bg-zinc-800/80">
-                                <div class="grid grid-cols-8 gap-1 sm:grid-cols-10">
-                                    <button
-                                        v-for="emoji in communityPageEmojis"
-                                        :key="emoji"
-                                        type="button"
-                                        class="flex h-8 w-8 items-center justify-center rounded-lg text-lg transition hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                                        :title="emoji"
-                                        @click="setCommunityPageModalEmoji(emoji)"
-                                    >
-                                        {{ emoji }}
-                                    </button>
+
+                            <div class="space-y-5">
+                                <div>
+                                    <p class="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Quem pode publicar?</p>
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <button
+                                            type="button"
+                                            :class="[
+                                                'flex flex-col items-center gap-2 rounded-xl border-2 p-3 text-center transition sm:p-4',
+                                                communityPageModalPublic
+                                                    ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 dark:bg-[var(--color-primary)]/20'
+                                                    : 'border-zinc-200 bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800/50 hover:border-zinc-300 dark:hover:border-zinc-500',
+                                            ]"
+                                            @click="communityPageModalPublic = true"
+                                        >
+                                            <span class="text-2xl" aria-hidden="true">🌐</span>
+                                            <span class="text-sm font-medium text-zinc-800 dark:text-zinc-200">Público</span>
+                                            <span class="text-xs text-zinc-500 dark:text-zinc-400">Alunos podem postar</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            :class="[
+                                                'flex flex-col items-center gap-2 rounded-xl border-2 p-3 text-center transition sm:p-4',
+                                                !communityPageModalPublic
+                                                    ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 dark:bg-[var(--color-primary)]/20'
+                                                    : 'border-zinc-200 bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800/50 hover:border-zinc-300 dark:hover:border-zinc-500',
+                                            ]"
+                                            @click="communityPageModalPublic = false"
+                                        >
+                                            <span class="text-2xl" aria-hidden="true">🔒</span>
+                                            <span class="text-sm font-medium text-zinc-800 dark:text-zinc-200">Privado</span>
+                                            <span class="text-xs text-zinc-500 dark:text-zinc-400">Só o instrutor</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="space-y-4 rounded-xl border border-zinc-200 bg-zinc-50/50 p-4 dark:border-zinc-600 dark:bg-zinc-800/30">
+                                    <div>
+                                        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Página padrão</p>
+                                        <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Aberta ao entrar na comunidade. Apenas uma por produto.</p>
+                                        <div class="mt-3">
+                                            <Toggle v-model="communityPageModalDefault" label="Definir como página padrão" />
+                                        </div>
+                                    </div>
+                                    <div class="border-t border-zinc-200 pt-4 dark:border-zinc-600">
+                                        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Destaque na comunidade</p>
+                                        <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Card com banner na sidebar direita da comunidade.</p>
+                                        <div class="mt-3">
+                                            <Toggle v-model="communityPageModalFeatured" label="Destacar na sidebar da comunidade" />
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            <!-- Painel Ícones (Lucide) -->
-                            <div v-if="communityPageIconPickerOpen === 'icon'" class="max-h-48 overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-600 dark:bg-zinc-800/80">
-                                <div class="grid grid-cols-6 gap-1 sm:grid-cols-8">
-                                    <button
-                                        v-for="name in communityPageIconNames"
-                                        :key="name"
-                                        type="button"
-                                        class="flex h-8 w-8 items-center justify-center rounded-lg transition hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                                        :title="name"
-                                        @click="setCommunityPageModalIcon(name)"
-                                    >
-                                        <component :is="communityPageIconComponents[name]" class="h-4 w-4 text-zinc-600 dark:text-zinc-300" />
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                        <div>
-                            <label class="mb-1.5 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Banner (opcional)</label>
-                            <input
-                                type="file"
-                                accept="image/*"
-                                class="hidden"
-                                ref="communityPageModalBannerInputRef"
-                                @change="onCommunityPageBannerChange"
-                            />
-                            <div v-if="communityPageModalBannerPreviewUrl" class="relative">
-                                <img :src="communityPageModalBannerPreviewUrl" alt="Preview" class="h-28 w-full rounded-xl object-cover object-center" />
-                                <button type="button" class="absolute right-2 top-2 rounded-lg bg-black/60 px-2 py-1 text-xs text-white hover:bg-black/80" @click="clearCommunityPageBanner">Remover</button>
-                            </div>
-                            <Button v-else type="button" size="sm" variant="outline" class="w-full" :disabled="communityPageModalBannerUploading" @click="communityPageModalBannerInputRef?.click()">
-                                {{ communityPageModalBannerUploading ? 'Enviando…' : 'Escolher imagem' }}
-                            </Button>
-                            <p class="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">Tamanho ideal: 1200×400 px (proporção 3:1). Máx. {{ uploadLimits.image_max_mb }} MB.</p>
-                        </div>
-                        <div>
-                            <p class="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Quem pode publicar?</p>
-                            <div class="grid grid-cols-2 gap-3">
-                                <button
-                                    type="button"
-                                    :class="[
-                                        'flex flex-col items-center gap-2 rounded-xl border-2 p-4 text-center transition',
-                                        communityPageModalPublic
-                                            ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 dark:bg-[var(--color-primary)]/20'
-                                            : 'border-zinc-200 bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800/50 hover:border-zinc-300 dark:hover:border-zinc-500',
-                                    ]"
-                                    @click="communityPageModalPublic = true"
-                                >
-                                    <span class="text-2xl" aria-hidden="true">🌐</span>
-                                    <span class="text-sm font-medium text-zinc-800 dark:text-zinc-200">Público</span>
-                                    <span class="text-xs text-zinc-500 dark:text-zinc-400">Alunos podem postar</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    :class="[
-                                        'flex flex-col items-center gap-2 rounded-xl border-2 p-4 text-center transition',
-                                        !communityPageModalPublic
-                                            ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 dark:bg-[var(--color-primary)]/20'
-                                            : 'border-zinc-200 bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800/50 hover:border-zinc-300 dark:hover:border-zinc-500',
-                                    ]"
-                                    @click="communityPageModalPublic = false"
-                                >
-                                    <span class="text-2xl" aria-hidden="true">🔒</span>
-                                    <span class="text-sm font-medium text-zinc-800 dark:text-zinc-200">Privado</span>
-                                    <span class="text-xs text-zinc-500 dark:text-zinc-400">Só o instrutor</span>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="rounded-xl border border-zinc-200 bg-zinc-50/50 p-4 dark:border-zinc-600 dark:bg-zinc-800/30">
-                            <p class="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Página padrão</p>
-                            <p class="mb-3 text-xs text-zinc-500 dark:text-zinc-400">Ao entrar na comunidade, esta página será aberta por padrão. Apenas uma página pode ser a padrão.</p>
-                            <Toggle v-model="communityPageModalDefault" label="Definir como página padrão" />
                         </div>
                     </div>
-                    <div class="flex justify-end gap-2 border-t border-zinc-200 px-5 py-3 dark:border-zinc-700">
+                    <div class="flex shrink-0 justify-end gap-2 border-t border-zinc-200 px-5 py-3 dark:border-zinc-700">
                         <Button variant="outline" @click="closeCommunityPageModal">Cancelar</Button>
                         <Button @click="saveCommunityPageModal" :disabled="communityPageModalSaving || !communityPageModalTitle?.trim()">{{ communityPageModalEditing ? 'Salvar' : 'Criar página' }}</Button>
                     </div>

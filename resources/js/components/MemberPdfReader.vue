@@ -207,7 +207,7 @@ async function loadDocuments() {
         const docs = [];
         let pages = 0;
         for (const { url } of list) {
-            const loadingTask = pdfjsLib.getDocument({ url, withCredentials: false });
+            const loadingTask = pdfjsLib.getDocument({ url, withCredentials: true });
             const pdf = await loadingTask.promise;
             docs.push(pdf);
             pages += pdf.numPages;

@@ -69,7 +69,9 @@ class ProcessPaymentWebhook implements ShouldQueue
                 return;
             }
             if ($order->status === 'completed') {
-                Log::info('ProcessPaymentWebhook: paid branch skipped (order already completed)', [
+                $order->loadMissing('orderItems.product', 'product');
+                $order->grantPurchasedProductAccessToBuyer();
+                Log::info('ProcessPaymentWebhook: paid branch skipped (order already completed, access re-synced)', [
                     'order_id' => $order->id,
                     'gateway' => $this->gatewaySlug,
                     'transaction_id' => $this->transactionId,

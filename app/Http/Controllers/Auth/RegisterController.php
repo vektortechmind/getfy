@@ -43,6 +43,6 @@ class RegisterController extends Controller
         if ($user->canAccessPanel()) {
             return redirect()->intended('/dashboard');
         }
-        return redirect()->intended('/area-membros');
+        return redirect()->intended('/meus-produtos');
     }
 }

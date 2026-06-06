@@ -9,6 +9,7 @@ const props = defineProps({
     product: { type: Object, required: true },
     config: { type: Object, default: () => ({}) },
     items: { type: Array, default: () => [] },
+    base_url: { type: String, default: '' },
     slug: { type: String, required: true },
 });
 </script>
@@ -26,7 +27,20 @@ const props = defineProps({
                     <h2 class="font-semibold">{{ item.name }}</h2>
                     <p v-if="item.description" class="mt-1 text-sm text-zinc-400 line-clamp-2">{{ item.description }}</p>
                     <div class="mt-4">
-                        <Link v-if="item.has_access" :href="`/m/${slug}`" class="text-sm text-[var(--ma-primary)] hover:underline">Acessar área</Link>
+                        <a
+                            v-if="item.has_access && item.open_url"
+                            :href="item.open_url"
+                            class="text-sm text-[var(--ma-primary)] hover:underline"
+                        >
+                            {{ item.access_label || 'Acessar' }}
+                        </a>
+                        <a
+                            v-else-if="item.has_access"
+                            :href="`${base_url}/products/${item.id}/open`"
+                            class="text-sm text-[var(--ma-primary)] hover:underline"
+                        >
+                            Acessar
+                        </a>
                         <a v-else :href="`/c/${item.checkout_slug}`" target="_blank" rel="noopener">
                             <Button size="sm">Comprar · R$ {{ item.price }}</Button>
                         </a>

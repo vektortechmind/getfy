@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Product;
 use App\Services\TenantMailConfigService;
+use App\Support\MemberAreaLoginPageProps;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -24,18 +25,9 @@ class MemberAreaForgotPasswordController extends Controller
         if (! $product instanceof Product || $product->type !== Product::TYPE_AREA_MEMBROS) {
             abort(404, 'Área de membros não encontrada.');
         }
-        $config = $product->member_area_config;
-        $loginConfig = $config['login'] ?? [];
         return Inertia::render('MemberAreaApp/ForgotPassword', [
             'slug' => $slug,
-            'product' => [
-                'name' => $product->name,
-                'logo_light' => $loginConfig['logo'] ?? ($config['logos']['logo_light'] ?? ''),
-                'title' => $loginConfig['title'] ?? 'Área de Membros',
-                'primary_color' => $loginConfig['primary_color'] ?? '#0ea5e9',
-                'background_image' => $loginConfig['background_image'] ?? '',
-                'background_color' => $loginConfig['background_color'] ?? '#18181b',
-            ],
+            'product' => MemberAreaLoginPageProps::productArray($product, $request, $slug),
         ]);
     }
 

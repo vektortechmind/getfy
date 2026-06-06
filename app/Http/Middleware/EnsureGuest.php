@@ -17,6 +17,6 @@ class EnsureGuest
         if ($user->canAccessPanel()) {
             return redirect('/dashboard');
         }
-        return redirect('/area-membros');
+        return redirect('/meus-produtos');
     }
 }

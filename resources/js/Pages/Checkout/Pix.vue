@@ -168,7 +168,7 @@ async function checkOrderStatus() {
                 pollInterval = null;
             }
             pendingPurchasePayload.value = buildPurchasePayloadFromStatus(data);
-            const url = data.redirect_url || props.redirect_after_purchase || '/area-membros';
+            const url = data.redirect_url || props.redirect_after_purchase || '/meus-produtos';
             redirectAfterFiring.value = url;
             flushPurchaseAndRedirect();
         }

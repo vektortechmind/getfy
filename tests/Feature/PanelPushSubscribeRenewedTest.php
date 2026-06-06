@@ -44,4 +44,37 @@ class PanelPushSubscribeRenewedTest extends TestCase
         $this->assertSame(0, $sub->push_fail_count);
         $this->assertNull($sub->last_push_failed_at);
     }
+
+    public function test_push_subscribe_prunes_old_endpoint_for_same_user_agent(): void
+    {
+        $this->withoutMiddleware(EnsureInstalled::class);
+
+        $user = User::factory()->create([
+            'role' => User::ROLE_INFOPRODUTOR,
+            'tenant_id' => 1,
+        ]);
+
+        $oldEndpoint = 'https://example.com/push/old-endpoint';
+        $newEndpoint = 'https://example.com/push/new-endpoint';
+        $userAgent = 'GetfyTestBrowser/1.0';
+
+        PanelPushSubscription::create([
+            'user_id' => $user->id,
+            'tenant_id' => $user->tenant_id,
+            'endpoint' => $oldEndpoint,
+            'keys' => ['auth' => 'OLD+/=', 'p256dh' => 'OLD2+/='],
+            'user_agent' => $userAgent,
+        ]);
+
+        $this->actingAs($user)->postJson('/painel/push-subscribe', [
+            'endpoint' => $newEndpoint,
+            'keys' => ['auth' => 'NEW+/=', 'p256dh' => 'NEW2+/='],
+            'renewed' => true,
+        ], [
+            'User-Agent' => $userAgent,
+        ])->assertOk();
+
+        $this->assertNull(PanelPushSubscription::where('endpoint', $oldEndpoint)->first());
+        $this->assertNotNull(PanelPushSubscription::where('endpoint', $newEndpoint)->first());
+    }
 }

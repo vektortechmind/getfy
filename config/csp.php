@@ -27,6 +27,10 @@ $scriptSources = [
     'https://cdn.utmify.com.br',
     // Captcha
     'https://challenges.cloudflare.com',
+    // YouTube IFrame API (player legado da área de membros)
+    'https://www.youtube.com',
+    'https://youtube.com',
+    'https://s.ytimg.com',
     // Infra
     'https://static.cloudflareinsights.com',
 ];

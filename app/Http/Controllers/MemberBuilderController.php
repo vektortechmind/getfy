@@ -16,6 +16,8 @@ use App\Models\Product;
 use App\Models\User;
 use App\Models\MemberNotification;
 use App\Models\MemberPushSubscription;
+use App\Rules\StorageOrHttpUrl;
+use App\Support\StoredFileUrl;
 use Illuminate\Support\Facades\Hash;
 use App\Services\MemberAreaResolver;
 use App\Services\MemberCommentService;
@@ -26,6 +28,9 @@ use App\Services\TeamAccessService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -45,8 +50,8 @@ class MemberBuilderController extends Controller
         foreach ($input as $item) {
             if (is_string($item)) {
                 $url = trim($item);
-                if ($url !== '' && filter_var($url, FILTER_VALIDATE_URL)) {
-                    $out[] = ['url' => $url, 'name' => 'Material'];
+                if ($url !== '' && StoredFileUrl::isValid($url)) {
+                    $out[] = ['url' => StoredFileUrl::normalize($url), 'name' => 'Material'];
                 }
                 continue;
             }
@@ -55,16 +60,41 @@ class MemberBuilderController extends Controller
             }
             $url = isset($item['url']) ? trim((string) $item['url']) : '';
             $name = isset($item['name']) ? trim((string) $item['name']) : '';
-            if ($url === '' || ! filter_var($url, FILTER_VALIDATE_URL)) {
+            if ($url === '' || ! StoredFileUrl::isValid($url)) {
                 continue;
             }
             $out[] = [
-                'url' => $url,
+                'url' => StoredFileUrl::normalize($url),
                 'name' => $name !== '' ? mb_substr($name, 0, 255) : 'Material',
             ];
         }
 
         return array_slice($out, 0, 30);
+    }
+
+    private function normalizeUsefulLinks(mixed $input): array
+    {
+        if (! is_array($input)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($input as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            $url = isset($item['url']) ? trim((string) $item['url']) : '';
+            $title = isset($item['title']) ? trim((string) $item['title']) : '';
+            if ($url === '' || ! StoredFileUrl::isValid($url)) {
+                continue;
+            }
+            $out[] = [
+                'url' => StoredFileUrl::normalize($url),
+                'title' => $title !== '' ? mb_substr($title, 0, 255) : 'Link',
+            ];
+        }
+
+        return array_slice($out, 0, 20);
     }
 
     public function __construct(
@@ -188,6 +218,8 @@ class MemberBuilderController extends Controller
                             'content_url' => $l->content_url,
                             'link_title' => $l->link_title,
                             'content_files' => $l->content_files,
+                            'support_files' => $l->support_files,
+                            'useful_links' => $l->useful_links,
                             'release_after_days' => $l->release_after_days,
                             'release_at_date' => $l->release_at_date?->format('Y-m-d'),
                             'content_text' => \App\Support\HtmlSanitizer::sanitize($l->content_text),
@@ -243,6 +275,7 @@ class MemberBuilderController extends Controller
                 'position' => $p->position,
                 'is_public_posting' => $p->is_public_posting,
                 'is_default' => (bool) ($p->is_default ?? false),
+                'is_featured' => (bool) ($p->is_featured ?? false),
             ])->values()->all(),
             'push_subscribers_count' => MemberPushSubscription::where('product_id', $produto->id)->count(),
             'comments' => MemberComment::forProduct($produto->id)
@@ -304,6 +337,7 @@ class MemberBuilderController extends Controller
 
         $validated = $request->validate([
             'member_area_config' => ['required', 'array'],
+            'member_area_config.login.template' => ['nullable', 'string', 'in:v1,v2'],
             'member_area_config.login.password_mode' => ['nullable', 'string', 'in:auto,default'],
             'member_area_config.login.default_password' => ['nullable', 'string', 'max:255'],
             'member_area_config.login.login_without_password' => ['nullable', 'boolean'],
@@ -563,6 +597,134 @@ class MemberBuilderController extends Controller
             return response()->json(['message' => 'Seção removida.']);
         }
         return back()->with('success', 'Seção removida.');
+    }
+
+    /**
+     * Reordena seções do produto, módulos dentro de uma seção ou aulas dentro de um módulo (transação única).
+     *
+     * JSON: { "scope": "sections"|"modules"|"lessons", "ordered_ids": int[], "section_id"?: int, "module_id"?: int }
+     */
+    public function reorder(Request $request, Product $produto): JsonResponse
+    {
+        $this->authorizeProduct($produto);
+        if ($produto->type !== Product::TYPE_AREA_MEMBROS) {
+            abort(403);
+        }
+
+        $validated = $request->validate([
+            'scope' => ['required', 'string', Rule::in(['sections', 'modules', 'lessons'])],
+            'ordered_ids' => ['present', 'array'],
+            'ordered_ids.*' => ['integer'],
+        ]);
+
+        if ($validated['scope'] === 'modules') {
+            $validated = array_merge($validated, $request->validate([
+                'section_id' => ['required', 'integer'],
+            ]));
+        } elseif ($validated['scope'] === 'lessons') {
+            $validated = array_merge($validated, $request->validate([
+                'module_id' => ['required', 'integer'],
+            ]));
+        }
+
+        $orderedIds = array_values(array_map(static fn ($id) => (int) $id, $validated['ordered_ids']));
+
+        DB::transaction(function () use ($produto, $validated, $orderedIds): void {
+            match ($validated['scope']) {
+                'sections' => $this->applyMemberSectionReorder($produto, $orderedIds),
+                'modules' => $this->applyMemberModuleReorder($produto, (int) $validated['section_id'], $orderedIds),
+                'lessons' => $this->applyMemberLessonReorder($produto, (int) $validated['module_id'], $orderedIds),
+            };
+        });
+
+        return response()->json(['message' => 'Ordem atualizada.']);
+    }
+
+    /** @param  array<int>  $orderedIds */
+    private function applyMemberSectionReorder(Product $produto, array $orderedIds): void
+    {
+        $existing = MemberSection::query()
+            ->where('product_id', $produto->id)
+            ->pluck('id')
+            ->map(static fn ($id) => (int) $id)
+            ->all();
+        $this->assertSameMemberReorderIdSet($orderedIds, $existing);
+
+        foreach ($orderedIds as $index => $id) {
+            MemberSection::query()->where('product_id', $produto->id)->whereKey($id)->update(['position' => $index + 1]);
+        }
+    }
+
+    /** @param  array<int>  $orderedIds */
+    private function applyMemberModuleReorder(Product $produto, int $sectionId, array $orderedIds): void
+    {
+        $section = MemberSection::query()
+            ->where('product_id', $produto->id)
+            ->whereKey($sectionId)
+            ->firstOrFail();
+
+        $existing = MemberModule::query()
+            ->where('product_id', $produto->id)
+            ->where('member_section_id', $section->id)
+            ->pluck('id')
+            ->map(static fn ($id) => (int) $id)
+            ->all();
+        $this->assertSameMemberReorderIdSet($orderedIds, $existing);
+
+        foreach ($orderedIds as $index => $id) {
+            MemberModule::query()
+                ->where('product_id', $produto->id)
+                ->where('member_section_id', $section->id)
+                ->whereKey($id)
+                ->update(['position' => $index + 1]);
+        }
+    }
+
+    /** @param  array<int>  $orderedIds */
+    private function applyMemberLessonReorder(Product $produto, int $moduleId, array $orderedIds): void
+    {
+        $module = MemberModule::query()
+            ->where('product_id', $produto->id)
+            ->whereKey($moduleId)
+            ->firstOrFail();
+
+        $existing = MemberLesson::query()
+            ->where('product_id', $produto->id)
+            ->where('member_module_id', $module->id)
+            ->pluck('id')
+            ->map(static fn ($id) => (int) $id)
+            ->all();
+        $this->assertSameMemberReorderIdSet($orderedIds, $existing);
+
+        foreach ($orderedIds as $index => $id) {
+            MemberLesson::query()
+                ->where('product_id', $produto->id)
+                ->where('member_module_id', $module->id)
+                ->whereKey($id)
+                ->update(['position' => $index + 1]);
+        }
+    }
+
+    /**
+     * @param  array<int>  $orderedIds
+     * @param  array<int>  $existingIds
+     */
+    private function assertSameMemberReorderIdSet(array $orderedIds, array $existingIds): void
+    {
+        if (count($orderedIds) !== count(array_unique($orderedIds))) {
+            throw ValidationException::withMessages([
+                'ordered_ids' => ['IDs duplicados não são permitidos.'],
+            ]);
+        }
+        $a = $existingIds;
+        $b = $orderedIds;
+        sort($a);
+        sort($b);
+        if ($a !== $b) {
+            throw ValidationException::withMessages([
+                'ordered_ids' => ['A lista não corresponde aos itens deste contexto.'],
+            ]);
+        }
     }
 
     // Modules
@@ -853,8 +1015,14 @@ class MemberBuilderController extends Controller
             'content_url' => ['nullable', 'string', 'max:2000'],
             'link_title' => ['nullable', 'string', 'max:255'],
             'content_files' => ['nullable', 'array', 'max:30'],
-            'content_files.*.url' => ['nullable', 'string', 'url', 'max:2000'],
+            'content_files.*.url' => ['nullable', 'string', 'max:2000', new StorageOrHttpUrl()],
             'content_files.*.name' => ['nullable', 'string', 'max:255'],
+            'support_files' => ['nullable', 'array', 'max:30'],
+            'support_files.*.url' => ['nullable', 'string', 'max:2000', new StorageOrHttpUrl()],
+            'support_files.*.name' => ['nullable', 'string', 'max:255'],
+            'useful_links' => ['nullable', 'array', 'max:20'],
+            'useful_links.*.title' => ['nullable', 'string', 'max:255'],
+            'useful_links.*.url' => ['nullable', 'string', 'max:2000', new StorageOrHttpUrl()],
             'release_after_days' => ['nullable', 'integer', 'min:1', 'max:3650'],
             'release_at_date' => ['nullable', 'date_format:Y-m-d'],
             'content_text' => ['nullable', 'string'],
@@ -871,6 +1039,8 @@ class MemberBuilderController extends Controller
             $validated['release_at_date'] = null;
         }
         $contentFiles = $this->normalizeLessonContentFiles($request->input('content_files'));
+        $supportFiles = $this->normalizeLessonContentFiles($request->input('support_files'));
+        $usefulLinks = $this->normalizeUsefulLinks($request->input('useful_links'));
         if (in_array($validated['type'] ?? null, [MemberLesson::TYPE_PDF, MemberLesson::TYPE_PDF_PRESENTATION, MemberLesson::TYPE_PDF_READER], true)
             && empty($validated['content_url']) && count($contentFiles) > 0) {
             $validated['content_url'] = $contentFiles[0]['url'];
@@ -887,6 +1057,8 @@ class MemberBuilderController extends Controller
             'content_files' => in_array($validated['type'], [MemberLesson::TYPE_PDF, MemberLesson::TYPE_PDF_PRESENTATION, MemberLesson::TYPE_PDF_READER], true)
                 ? ($contentFiles !== [] ? $contentFiles : null)
                 : null,
+            'support_files' => $supportFiles !== [] ? $supportFiles : null,
+            'useful_links' => $usefulLinks !== [] ? $usefulLinks : null,
             'release_after_days' => $validated['release_after_days'] ?? null,
             'release_at_date' => $validated['release_at_date'] ?? null,
             'content_text' => $validated['content_text'] ?? null,
@@ -913,8 +1085,14 @@ class MemberBuilderController extends Controller
             'content_url' => ['nullable', 'string', 'max:2000'],
             'link_title' => ['nullable', 'string', 'max:255'],
             'content_files' => ['nullable', 'array', 'max:30'],
-            'content_files.*.url' => ['nullable', 'string', 'url', 'max:2000'],
+            'content_files.*.url' => ['nullable', 'string', 'max:2000', new StorageOrHttpUrl()],
             'content_files.*.name' => ['nullable', 'string', 'max:255'],
+            'support_files' => ['nullable', 'array', 'max:30'],
+            'support_files.*.url' => ['nullable', 'string', 'max:2000', new StorageOrHttpUrl()],
+            'support_files.*.name' => ['nullable', 'string', 'max:255'],
+            'useful_links' => ['nullable', 'array', 'max:20'],
+            'useful_links.*.title' => ['nullable', 'string', 'max:255'],
+            'useful_links.*.url' => ['nullable', 'string', 'max:2000', new StorageOrHttpUrl()],
             'release_after_days' => ['nullable', 'integer', 'min:1', 'max:3650'],
             'release_at_date' => ['nullable', 'date_format:Y-m-d'],
             'content_text' => ['nullable', 'string'],
@@ -944,6 +1122,8 @@ class MemberBuilderController extends Controller
         }
         $type = $validated['type'] ?? $lesson->type;
         $contentFiles = $this->normalizeLessonContentFiles($request->input('content_files'));
+        $supportFiles = $this->normalizeLessonContentFiles($request->input('support_files'));
+        $usefulLinks = $this->normalizeUsefulLinks($request->input('useful_links'));
         if (in_array($type, [MemberLesson::TYPE_PDF, MemberLesson::TYPE_PDF_PRESENTATION, MemberLesson::TYPE_PDF_READER], true)) {
             if (count($contentFiles) > 0) {
                 $validated['content_files'] = $contentFiles;
@@ -957,6 +1137,12 @@ class MemberBuilderController extends Controller
             if (array_key_exists('content_files', $validated)) {
                 $validated['content_files'] = null;
             }
+        }
+        if ($request->has('support_files')) {
+            $validated['support_files'] = $supportFiles !== [] ? $supportFiles : null;
+        }
+        if ($request->has('useful_links')) {
+            $validated['useful_links'] = $usefulLinks !== [] ? $usefulLinks : null;
         }
         $lesson->update($validated);
         if ($request->expectsJson()) {
@@ -1219,6 +1405,7 @@ class MemberBuilderController extends Controller
             'banner' => ['nullable', 'string', 'max:500'],
             'is_public_posting' => ['boolean'],
             'is_default' => ['boolean'],
+            'is_featured' => ['boolean'],
         ]);
         if ($request->boolean('is_default')) {
             MemberCommunityPage::where('product_id', $produto->id)->update(['is_default' => false]);
@@ -1233,6 +1420,7 @@ class MemberBuilderController extends Controller
             'position' => $max + 1,
             'is_public_posting' => $request->boolean('is_public_posting', true),
             'is_default' => $request->boolean('is_default', false),
+            'is_featured' => $request->boolean('is_featured', false),
         ]);
         if ($request->expectsJson()) {
             return response()->json([
@@ -1258,6 +1446,7 @@ class MemberBuilderController extends Controller
             'position' => ['sometimes', 'integer', 'min:0'],
             'is_public_posting' => ['boolean'],
             'is_default' => ['boolean'],
+            'is_featured' => ['boolean'],
         ]);
         if ($request->boolean('is_default')) {
             MemberCommunityPage::where('product_id', $produto->id)->where('id', '!=', $page->id)->update(['is_default' => false]);
@@ -1306,6 +1495,7 @@ class MemberBuilderController extends Controller
             'position' => $p->position,
             'is_public_posting' => $p->is_public_posting,
             'is_default' => (bool) ($p->is_default ?? false),
+            'is_featured' => (bool) ($p->is_featured ?? false),
         ])->values()->all();
     }
 

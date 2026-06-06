@@ -13,6 +13,8 @@ use App\Models\SpedyIntegration;
 use App\Models\UtmifyIntegration;
 use App\Models\ApiApplication;
 use App\Models\Webhook;
+use App\Models\InboundWebhookEndpoint;
+use App\Http\Controllers\Integrations\ExternalCheckoutController;
 use App\Support\WebhookEventCatalog;
 use App\Plugins\PluginExtensionRegistry;
 use App\Plugins\PluginRegistry;
@@ -26,7 +28,10 @@ class IntegrationsController extends Controller
     public function index(): Response
     {
         $tenantId = auth()->user()->tenant_id;
-        $pluginApps = PluginRegistry::getIntegrationApps();
+        $pluginApps = array_values(array_filter(
+            PluginRegistry::getIntegrationApps(),
+            fn (array $app) => ($app['id'] ?? '') !== 'webhook-entrada'
+        ));
 
         // Plugin app badges (ex.: AutoZap "Ativo" quando configurado).
         // Plugins podem ser carregados sem autoload; por isso, usamos require_once quando necessário.
@@ -174,6 +179,14 @@ class IntegrationsController extends Controller
             ->values()
             ->all();
 
+        $externalCheckoutEndpoints = InboundWebhookEndpoint::query()
+            ->forTenant($tenantId)
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (InboundWebhookEndpoint $e) => ExternalCheckoutController::serializeEndpoint($e))
+            ->values()
+            ->all();
+
         return Inertia::render('Integrations/Index', [
             'gateways' => $gateways,
             'gateway_order' => $gatewayOrder,
@@ -187,6 +200,7 @@ class IntegrationsController extends Controller
             'api_applications' => $apiApplications,
             'plugin_apps' => $pluginApps,
             'conversion_pixel_integrations' => $conversionPixelIntegrations,
+            'external_checkout_endpoints' => $externalCheckoutEndpoints,
         ]);
     }
 

@@ -218,13 +218,24 @@ class StorageUrlNormalizer
         $details['member_community_pages'] = $count;
         $totalUpdated += $count;
 
-        // MemberCommunityPost: image
+        // MemberCommunityPost: image, video
         $count = 0;
-        MemberCommunityPost::query()->whereNotNull('image')->where('image', '!=', '')->chunk(100, function ($posts) use (&$count) {
+        MemberCommunityPost::query()->where(function ($q) {
+            $q->whereNotNull('image')->where('image', '!=', '')
+                ->orWhere(function ($q2) {
+                    $q2->whereNotNull('video')->where('video', '!=', '');
+                });
+        })->chunk(100, function ($posts) use (&$count) {
             foreach ($posts as $post) {
-                $v = $post->image;
-                if (is_string($v) && $this->isLocalStorageUrl($v)) {
-                    $post->image = $this->toRelativePath($v);
+                $updated = false;
+                foreach (['image', 'video'] as $field) {
+                    $v = $post->{$field};
+                    if (is_string($v) && $v !== '' && $this->isLocalStorageUrl($v)) {
+                        $post->{$field} = $this->toRelativePath($v);
+                        $updated = true;
+                    }
+                }
+                if ($updated) {
                     $post->save();
                     $count++;
                 }

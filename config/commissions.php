@@ -10,6 +10,13 @@ return [
         'google_pay' => ['percent' => 3.99, 'fixed_cents' => 39],
     ],
 
+    /** Defaults por gateway quando o tenant ainda não salvou taxas customizadas. */
+    'gateway_default_fees' => [
+        'cajupay' => [
+            'pix' => ['percent' => 0, 'fixed_cents' => 99],
+        ],
+    ],
+
     'default_settlement_days' => [
         'pix' => 0,
         'card' => 30,

@@ -39,7 +39,7 @@ class MemberAreaPdfReaderTest extends TestCase
             'position' => 1,
         ]);
 
-        $remoteUrl = 'https://r2.example.com/member-area/test/reader.pdf';
+        $remoteUrl = 'https://r2.getfy.cloud/member-area/test/reader.pdf';
         $lesson = MemberLesson::create([
             'member_module_id' => $module->id,
             'product_id' => $product->id,
@@ -99,7 +99,7 @@ class MemberAreaPdfReaderTest extends TestCase
             'title' => 'Leitor',
             'position' => 1,
             'type' => MemberLesson::TYPE_PDF_READER,
-            'content_url' => 'https://r2.example.com/x.pdf',
+            'content_url' => 'https://r2.getfy.cloud/x.pdf',
         ]);
 
         $aluno = User::factory()->create([
@@ -174,7 +174,7 @@ class MemberAreaPdfReaderTest extends TestCase
             'title' => 'Leitor',
             'position' => 1,
             'type' => MemberLesson::TYPE_PDF_READER,
-            'content_url' => 'https://r2.example.com/x.pdf',
+            'content_url' => 'https://r2.getfy.cloud/x.pdf',
         ]);
 
         $aluno = User::factory()->create([

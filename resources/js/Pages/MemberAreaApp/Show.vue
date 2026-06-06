@@ -300,8 +300,15 @@ function productSectionUnlocked(mod) {
                     <div class="p-3">
                         <p class="font-medium truncate">{{ ip.name }}</p>
                         <Link
-                            v-if="ip.has_access"
-                            :href="`/m/${slug}/loja`"
+                            v-if="ip.has_access && ip.open_url"
+                            :href="ip.open_url"
+                            class="mt-2 inline-block text-sm text-[var(--ma-primary)] hover:underline"
+                        >
+                            {{ ip.access_label || 'Acessar' }}
+                        </Link>
+                        <Link
+                            v-else-if="ip.has_access"
+                            :href="`${base_url}/products/${ip.id}/open`"
                             class="mt-2 inline-block text-sm text-[var(--ma-primary)] hover:underline"
                         >
                             Acessar

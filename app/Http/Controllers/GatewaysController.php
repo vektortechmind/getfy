@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Gateways\GatewayRegistry;
 use App\Gateways\CajuPay\CajuPayDriver;
 use App\Models\GatewayCredential;
+use App\Models\GatewayFeeSetting;
 use App\Models\Setting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -650,7 +651,7 @@ class GatewaysController extends Controller
                 ->where('gateway_slug', $slug)
                 ->where('method', $method)
                 ->first();
-            $defaults = config('commissions.default_gateway_fees.'.$method, ['percent' => 0, 'fixed_cents' => 0]);
+            $defaults = GatewayFeeSetting::defaultsFor($slug, $method);
             $fees[$method] = [
                 'percent' => $row ? (float) $row->percent : (float) ($defaults['percent'] ?? 0),
                 'fixed_cents' => $row ? (int) $row->fixed_cents : (int) ($defaults['fixed_cents'] ?? 0),
