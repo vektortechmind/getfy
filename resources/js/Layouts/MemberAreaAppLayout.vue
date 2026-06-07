@@ -538,7 +538,7 @@ watch(cinemaMode, (active) => {
         <link v-if="faviconHref" rel="icon" :href="faviconHref" />
     </Head>
     <div
-        class="min-h-screen transition-colors"
+        class="min-h-screen overflow-x-hidden transition-colors"
         :style="{
             '--ma-primary': theme.primary || '#0ea5e9',
             '--ma-bg': theme.background || '#18181b',
@@ -553,7 +553,7 @@ watch(cinemaMode, (active) => {
             :class="[headerScrolled ? 'bg-black/30 backdrop-blur-md' : 'bg-transparent']"
             :style="{ color: 'var(--ma-text)' }"
         >
-            <div class="flex min-w-0 shrink items-center gap-4 md:gap-6">
+            <div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-4 md:gap-6">
                 <a
                     v-if="showStudentHubLink"
                     :href="studentHubUrl"
@@ -562,14 +562,23 @@ watch(cinemaMode, (active) => {
                 >
                     ← Meus produtos
                 </a>
-                <Link :href="basePath" class="flex shrink-0 items-center gap-4" @click="closeMobileMenu">
+                <button
+                    v-if="showMobileHamburger"
+                    type="button"
+                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-white/90 hover:bg-white/10 md:hidden"
+                    aria-label="Abrir menu"
+                    @click="mobileMenuOpen = true"
+                >
+                    <Menu class="h-6 w-6" />
+                </button>
+                <Link :href="basePath" class="flex min-w-0 shrink items-center gap-4 overflow-hidden" @click="closeMobileMenu">
                     <img
                         v-if="headerLogo"
                         :src="headerLogo"
                         :alt="product?.name || 'Logo'"
-                        class="h-8 w-auto max-w-[180px] object-contain object-left"
+                        class="h-8 w-auto max-w-[6.5rem] object-contain object-left sm:max-w-[120px] md:max-w-[180px]"
                     />
-                    <span v-else class="text-lg font-semibold text-white drop-shadow-md">
+                    <span v-else class="truncate text-lg font-semibold text-white drop-shadow-md">
                         {{ product?.name || 'Área de Membros' }}
                     </span>
                 </Link>
@@ -604,16 +613,6 @@ watch(cinemaMode, (active) => {
                         Comunidade
                     </Link>
                 </nav>
-                <!-- Botão hamburger: só quando mais de 2 itens E em telas pequenas (md:hidden quando showMobileHamburger) -->
-                <button
-                    v-if="showMobileHamburger"
-                    type="button"
-                    class="flex h-10 w-10 items-center justify-center rounded-lg text-white/90 hover:bg-white/10 md:hidden"
-                    aria-label="Abrir menu"
-                    @click="mobileMenuOpen = true"
-                >
-                    <Menu class="h-6 w-6" />
-                </button>
             </div>
             <div class="flex shrink-0 items-center gap-2">
                 <!-- Gamificação: badge + dropdown -->
@@ -801,7 +800,24 @@ watch(cinemaMode, (active) => {
                     >
                         <X class="h-5 w-5" />
                     </button>
-                    <nav class="flex flex-col gap-1 px-4 py-2">
+                    <div class="shrink-0 border-b border-zinc-700 px-4 pb-4 pt-2">
+                        <Link
+                            :href="basePath"
+                            class="flex min-w-0 items-center gap-3"
+                            @click="closeMobileMenu"
+                        >
+                            <img
+                                v-if="headerLogo"
+                                :src="headerLogo"
+                                :alt="product?.name || 'Logo'"
+                                class="h-8 w-auto max-w-[10rem] object-contain object-left"
+                            />
+                            <span v-else class="truncate text-base font-semibold text-white">
+                                {{ product?.name || 'Área de Membros' }}
+                            </span>
+                        </Link>
+                    </div>
+                    <nav class="flex flex-col gap-1 overflow-y-auto px-4 py-2">
                         <a
                             v-if="showStudentHubLink"
                             :href="studentHubUrl"
@@ -925,7 +941,7 @@ watch(cinemaMode, (active) => {
             :class="cinemaMode ? 'pt-0' : 'pt-14'"
             :style="{ backgroundColor: 'var(--ma-bg)', color: 'var(--ma-text)' }"
         >
-            <main class="print:p-0" :class="cinemaMode ? 'px-2 pb-4 pt-1 sm:px-3' : 'px-6 pb-6'">
+            <main class="overflow-x-hidden print:p-0" :class="cinemaMode ? 'px-2 pb-4 pt-1 sm:px-3' : 'px-4 pb-6 sm:px-6'">
                 <slot />
             </main>
         </div>

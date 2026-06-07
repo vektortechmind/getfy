@@ -97,14 +97,14 @@ async function saveNote() {
 </script>
 
 <template>
-    <div class="relative z-10" :class="cinemaMode ? 'space-y-2' : 'space-y-3'">
-        <h1 v-if="!cinemaMode" class="min-w-0 text-lg font-bold leading-snug tracking-tight text-white lg:text-xl">
+    <div class="relative z-10 w-full min-w-0 max-w-full" :class="cinemaMode ? 'space-y-2' : 'space-y-3'">
+        <h1 v-if="!cinemaMode" class="min-w-0 truncate text-lg font-bold leading-snug tracking-tight text-white lg:text-xl">
             {{ title }}
         </h1>
 
         <div class="flex flex-col" :class="cinemaMode ? 'gap-0' : 'gap-2'">
             <div
-                class="flex min-w-0 flex-wrap items-center gap-2"
+                class="flex min-w-0 flex-nowrap items-center gap-2 sm:flex-wrap"
                 :class="cinemaMode ? 'justify-center' : 'lg:justify-end'"
             >
                 <button
@@ -117,7 +117,7 @@ async function saveNote() {
                     Aulas
                 </button>
 
-                <label class="inline-flex h-8 cursor-pointer select-none items-center gap-2 rounded-lg bg-zinc-800/60 px-2.5">
+                <label class="hidden h-8 cursor-pointer select-none items-center gap-2 rounded-lg bg-zinc-800/60 px-2.5 lg:inline-flex">
                     <span class="text-xs font-medium text-zinc-400">Modo cinema</span>
                     <button
                         type="button"
@@ -148,12 +148,12 @@ async function saveNote() {
                     />
                 </button>
 
-                <div class="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg bg-zinc-800/60 px-2.5 sm:min-w-[180px] sm:flex-none lg:min-w-[220px]">
+                <div class="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg bg-zinc-800/60 px-2.5 sm:flex-none sm:min-w-[180px] lg:min-w-[220px]">
                     <Pencil class="h-3.5 w-3.5 shrink-0 text-zinc-500" />
                     <input
                         v-model="noteText"
                         type="text"
-                        class="min-w-0 flex-1 bg-transparent text-xs text-white placeholder-zinc-500 focus:outline-none"
+                        class="min-w-0 w-0 flex-1 bg-transparent text-xs text-white placeholder-zinc-500 focus:outline-none"
                         placeholder="Adicionar anotação"
                         maxlength="5000"
                         @input="scheduleNoteSave"
@@ -163,7 +163,7 @@ async function saveNote() {
                 </div>
             </div>
 
-            <div v-if="!cinemaMode" class="flex flex-wrap items-center justify-center gap-2 lg:justify-end">
+            <div v-if="!cinemaMode" class="flex w-full min-w-0 max-w-full flex-wrap items-center justify-start gap-2 lg:justify-end">
                 <Link
                     v-if="navigation.prev"
                     :href="lessonUrl(navigation.prev.id)"

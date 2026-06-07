@@ -54,29 +54,29 @@ watch(
 </script>
 
 <template>
-    <section v-if="hasSection" class="rounded-2xl bg-zinc-900/50 px-5 py-4">
-        <div v-if="showTabs" class="mb-4 flex gap-1 rounded-lg bg-zinc-800/50 p-1">
+    <section v-if="hasSection" class="w-full min-w-0 max-w-full overflow-hidden rounded-2xl bg-zinc-900/50 px-4 py-4 sm:px-5">
+        <div v-if="showTabs" class="mb-4 flex min-w-0 gap-1 rounded-lg bg-zinc-800/50 p-1">
             <button
                 type="button"
-                class="flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wide transition"
+                class="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-2 py-2 text-[10px] font-semibold uppercase tracking-wide transition sm:text-xs"
                 :class="activeTab === 'materials'
                     ? 'bg-[var(--ma-primary)]/15 text-[var(--ma-primary)]'
                     : 'text-zinc-400 hover:text-zinc-200'"
                 @click="activeTab = 'materials'"
             >
-                <FileText class="h-3.5 w-3.5" />
-                Materiais de apoio
+                <FileText class="h-3.5 w-3.5 shrink-0" />
+                <span class="truncate">Materiais</span>
             </button>
             <button
                 type="button"
-                class="flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wide transition"
+                class="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-2 py-2 text-[10px] font-semibold uppercase tracking-wide transition sm:text-xs"
                 :class="activeTab === 'links'
                     ? 'bg-[var(--ma-primary)]/15 text-[var(--ma-primary)]'
                     : 'text-zinc-400 hover:text-zinc-200'"
                 @click="activeTab = 'links'"
             >
-                <Link2 class="h-3.5 w-3.5" />
-                Links úteis
+                <Link2 class="h-3.5 w-3.5 shrink-0" />
+                <span class="truncate">Links</span>
             </button>
         </div>
 
@@ -97,7 +97,7 @@ watch(
                     download
                     target="_blank"
                     rel="noopener"
-                    class="group flex items-center gap-3 rounded-xl bg-zinc-800/60 px-4 py-3 text-sm text-zinc-200 transition hover:bg-zinc-800"
+                    class="group flex min-w-0 max-w-full items-center gap-3 overflow-hidden rounded-xl bg-zinc-800/60 px-3 py-3 text-sm text-zinc-200 transition hover:bg-zinc-800 sm:px-4"
                 >
                     <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ma-primary)]/15 text-[var(--ma-primary)]">
                         <Download class="h-4 w-4" />
@@ -115,7 +115,7 @@ watch(
                     :href="link.url"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="group flex items-center gap-3 rounded-xl bg-zinc-800/60 px-4 py-3 text-sm text-zinc-200 transition hover:bg-zinc-800"
+                    class="group flex min-w-0 max-w-full items-center gap-3 overflow-hidden rounded-xl bg-zinc-800/60 px-3 py-3 text-sm text-zinc-200 transition hover:bg-zinc-800 sm:px-4"
                 >
                     <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ma-primary)]/15 text-[var(--ma-primary)]">
                         <ExternalLink class="h-4 w-4" />

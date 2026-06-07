@@ -2,7 +2,7 @@
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { getVideoProviderType } from '@/lib/utils';
 import { ensureVidstackLoaded } from '@/lib/loadVidstack';
-import { Maximize2, Minimize2, Play, Pause, Monitor, Gauge } from 'lucide-vue-next';
+import { Maximize2, Minimize2, Play, Pause, Monitor, Gauge, Volume2, Volume1, VolumeX } from 'lucide-vue-next';
 
 const props = defineProps({
     src: { type: String, default: '' },
@@ -98,7 +98,9 @@ let ytControlsHideTimer = null;
 
 const QUALITY_STORAGE_KEY = 'member-area-youtube-quality';
 const SPEED_STORAGE_KEY = 'member-area-youtube-speed';
+const VOLUME_STORAGE_KEY = 'member-area-youtube-volume';
 const DEFAULT_PLAYBACK_SPEED = 1;
+const DEFAULT_VOLUME = 100;
 const SPEED_OPTIONS_FALLBACK = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
 const qualityMenuOpen = ref(false);
@@ -110,7 +112,15 @@ const lastQualityError = ref(null);
 const ytIsPlaying = ref(false);
 const ytCurrentTime = ref(0);
 const ytDuration = ref(0);
+const ytBufferedPct = ref(0);
+const ytProgressHover = ref(false);
+const progressTrackRef = ref(null);
+const volumeTrackRef = ref(null);
 const ytControlsVisible = ref(true);
+const ytVolume = ref(DEFAULT_VOLUME);
+const ytMuted = ref(false);
+const ytVolumeHover = ref(false);
+const ytVolumeScrubbing = ref(false);
 const ytRootEl = ref(null);
 const ytPosterVisible = ref(true);
 const ytScrubbing = ref(false);
@@ -196,6 +206,22 @@ function saveSpeed(rate) {
     } catch (_) {}
 }
 
+function getSavedVolume() {
+    try {
+        const raw = localStorage.getItem(VOLUME_STORAGE_KEY);
+        const n = parseInt(raw, 10);
+        return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : DEFAULT_VOLUME;
+    } catch (_) {
+        return DEFAULT_VOLUME;
+    }
+}
+
+function saveVolume(v) {
+    try {
+        localStorage.setItem(VOLUME_STORAGE_KEY, String(Math.max(0, Math.min(100, Math.round(v)))));
+    } catch (_) {}
+}
+
 function formatSpeedLabel(rate) {
     const r = Number(rate);
     if (!Number.isFinite(r)) return '1x';
@@ -240,6 +266,37 @@ function applyYoutubeSpeed(rate) {
             selectedSpeed.value = Number.isFinite(applied) && applied > 0 ? applied : r;
         }
     } catch (_) {}
+}
+
+function applyYoutubeVolume() {
+    if (!ytPlayer) return;
+    try {
+        if (ytMuted.value || ytVolume.value === 0) {
+            ytPlayer.mute?.();
+            return;
+        }
+        ytPlayer.unMute?.();
+        ytPlayer.setVolume?.(ytVolume.value);
+    } catch (_) {}
+}
+
+function toggleMute() {
+    ytMuted.value = !ytMuted.value;
+    if (!ytMuted.value && ytVolume.value === 0) {
+        const saved = getSavedVolume();
+        ytVolume.value = saved > 0 ? saved : 50;
+    }
+    applyYoutubeVolume();
+    if (!ytMuted.value) saveVolume(ytVolume.value);
+    showControls();
+}
+
+function setYoutubeVolume(value) {
+    const vol = Math.max(0, Math.min(100, Math.round(value)));
+    ytVolume.value = vol;
+    ytMuted.value = vol === 0;
+    applyYoutubeVolume();
+    saveVolume(vol);
 }
 
 function setSpeed(rate) {
@@ -310,6 +367,12 @@ function destroyYoutubePlayer() {
     ytIsPlaying.value = false;
     ytCurrentTime.value = 0;
     ytDuration.value = 0;
+    ytBufferedPct.value = 0;
+    ytProgressHover.value = false;
+    ytVolume.value = DEFAULT_VOLUME;
+    ytMuted.value = false;
+    ytVolumeHover.value = false;
+    ytVolumeScrubbing.value = false;
     ytControlsVisible.value = true;
     ytPosterVisible.value = true;
     ytScrubbing.value = false;
@@ -372,6 +435,8 @@ async function initYoutubePlayer() {
 
     selectedQuality.value = getSavedQuality();
     selectedSpeed.value = getSavedSpeed();
+    ytVolume.value = getSavedVolume();
+    ytMuted.value = false;
     try {
         await loadYoutubeApiOnce();
     } catch (_) {
@@ -418,6 +483,7 @@ async function initYoutubePlayer() {
                 selectedSpeed.value = speedToApply;
                 saveSpeed(speedToApply);
                 applyYoutubeSpeed(speedToApply);
+                applyYoutubeVolume();
                 // Aplicar qualidade em diferentes momentos melhora a chance de pegar (como na antiga).
                 applyYoutubeQuality(selectedQuality.value);
                 ytApplyQualityTimer = setTimeout(() => applyYoutubeQuality(selectedQuality.value), 800);
@@ -435,6 +501,10 @@ async function initYoutubePlayer() {
                                 ytNearEnd.value = t >= Math.max(0, d - 4);
                             }
                             emitProgress(t, d);
+                        }
+                        const loaded = ytPlayer.getVideoLoadedFraction?.();
+                        if (typeof loaded === 'number') {
+                            ytBufferedPct.value = Math.max(0, Math.min(100, loaded * 100));
                         }
                     } catch (_) {}
                 }, 350);
@@ -517,6 +587,28 @@ const ytProgressPct = computed(() => {
     return Math.max(0, Math.min(100, (ytCurrentTime.value / d) * 100));
 });
 
+const PROGRESS_THUMB_RADIUS_PX = 7;
+
+const ytThumbStyle = computed(() => {
+    const pct = ytProgressPct.value;
+    const r = PROGRESS_THUMB_RADIUS_PX;
+    return {
+        left: `clamp(${r}px, ${pct}%, calc(100% - ${r}px))`,
+    };
+});
+
+const ytVolumeFillPct = computed(() => (ytMuted.value ? 0 : ytVolume.value));
+
+const VOLUME_THUMB_RADIUS_PX = 5;
+
+const ytVolumeThumbStyle = computed(() => {
+    const pct = ytVolumeFillPct.value;
+    const r = VOLUME_THUMB_RADIUS_PX;
+    return {
+        left: `clamp(${r}px, ${pct}%, calc(100% - ${r}px))`,
+    };
+});
+
 function formatTime(seconds) {
     const s = Math.max(0, Math.floor(Number(seconds) || 0));
     const h = Math.floor(s / 3600);
@@ -534,9 +626,61 @@ function seekToPct(pct) {
     try {
         ytPlayer.seekTo?.(t, true);
         ytCurrentTime.value = t;
-        // Mascara branding que pode piscar após seek.
         maskBrandingFor(450);
     } catch (_) {}
+}
+
+function progressPctFromClientX(clientX) {
+    const track = progressTrackRef.value;
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return 0;
+    return Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+}
+
+function onProgressPointerDown(e) {
+    ytScrubbing.value = true;
+    showControls();
+    seekToPct(progressPctFromClientX(e.clientX));
+    e.currentTarget?.setPointerCapture?.(e.pointerId);
+}
+
+function onProgressPointerMove(e) {
+    if (!ytScrubbing.value) return;
+    seekToPct(progressPctFromClientX(e.clientX));
+}
+
+function onProgressPointerEnd(e) {
+    if (!ytScrubbing.value) return;
+    e.currentTarget?.releasePointerCapture?.(e.pointerId);
+    onScrubEnd();
+}
+
+function volumePctFromClientX(clientX) {
+    const track = volumeTrackRef.value;
+    if (!track) return ytVolume.value;
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return ytVolume.value;
+    return Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+}
+
+function onVolumePointerDown(e) {
+    ytVolumeScrubbing.value = true;
+    showControls();
+    setYoutubeVolume(volumePctFromClientX(e.clientX));
+    e.currentTarget?.setPointerCapture?.(e.pointerId);
+}
+
+function onVolumePointerMove(e) {
+    if (!ytVolumeScrubbing.value) return;
+    setYoutubeVolume(volumePctFromClientX(e.clientX));
+}
+
+function onVolumePointerEnd(e) {
+    if (!ytVolumeScrubbing.value) return;
+    e.currentTarget?.releasePointerCapture?.(e.pointerId);
+    ytVolumeScrubbing.value = false;
+    scheduleHideControls();
 }
 
 function onYoutubeOverlayInteract() {
@@ -550,10 +694,6 @@ function isSpeedSelected(rate) {
     return Math.abs(Number(selectedSpeed.value) - Number(rate)) < 0.01;
 }
 
-function onScrubStart() {
-    ytScrubbing.value = true;
-    showControls();
-}
 function onScrubEnd() {
     ytScrubbing.value = false;
     maskBrandingFor(350);
@@ -576,18 +716,15 @@ function showControls() {
     scheduleHideControls();
 }
 
-function isIosTouchDevice() {
-    if (typeof navigator === 'undefined') return false;
-    const ua = String(navigator.userAgent || '');
-    return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-}
-
 function enterImmersiveMode() {
     if (immersiveActive.value) return;
     immersiveActive.value = true;
     if (typeof document !== 'undefined') {
         bodyOverflowPrev = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
+    }
+    if (isMobile.value) {
+        void lockOrientationLandscape();
     }
 }
 
@@ -598,6 +735,7 @@ function exitImmersiveMode() {
         document.body.style.overflow = bodyOverflowPrev;
         bodyOverflowPrev = '';
     }
+    unlockOrientation();
 }
 
 async function tryEnterFullscreen(el) {
@@ -616,7 +754,7 @@ async function tryEnterFullscreen(el) {
 }
 
 /**
- * Tela cheia: Fullscreen API quando suportado; no iOS + YouTube (e fallback Vidstack) usa modo imersivo (fixed).
+ * Tela cheia: Fullscreen API quando suportado; no mobile usa modo imersivo como fallback + landscape.
  */
 async function requestMemberVideoFullscreen() {
     if (immersiveActive.value) {
@@ -632,15 +770,22 @@ async function requestMemberVideoFullscreen() {
                 if (document.exitFullscreen) await document.exitFullscreen();
                 else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
             } catch (_) {}
+            unlockOrientation();
             return;
         }
     }
 
-    if (useLegacyYoutube.value && wrap) {
-        if (isIosTouchDevice() && isMobile.value) {
-            enterImmersiveMode();
+    if (isMobile.value && wrap) {
+        const ok = await tryEnterFullscreen(wrap);
+        if (ok) {
+            await lockOrientationLandscape();
             return;
         }
+        enterImmersiveMode();
+        return;
+    }
+
+    if (useLegacyYoutube.value && wrap) {
         const ok = await tryEnterFullscreen(wrap);
         if (!ok) {
             enterImmersiveMode();
@@ -656,21 +801,19 @@ async function requestMemberVideoFullscreen() {
                 return;
             }
         } catch (_) {
-            if (isIosTouchDevice() && isMobile.value) {
-                enterImmersiveMode();
-            }
-            return;
+            /* fallback abaixo */
         }
-        try {
-            el.dispatchEvent(new CustomEvent('media-enter-fullscreen-request', { bubbles: true, composed: true }));
-        } catch (_) {}
-        if (isIosTouchDevice() && isMobile.value) {
+        if (wrap) {
+            const ok = await tryEnterFullscreen(wrap);
+            if (ok) {
+                return;
+            }
             enterImmersiveMode();
         }
         return;
     }
 
-    if (isIosTouchDevice() && isMobile.value && wrap) {
+    if (wrap) {
         enterImmersiveMode();
     }
 }
@@ -756,7 +899,7 @@ onMounted(() => {
             if (!isMobile.value) return;
             if (isPlayerFullscreen()) {
                 setTimeout(() => lockOrientationLandscape(), 0);
-            } else {
+            } else if (!immersiveActive.value) {
                 unlockOrientation();
             }
         };
@@ -824,11 +967,6 @@ const effectivePlaysinline = computed(() => {
     if (providerType.value !== 'native') return props.playsinline;
     if (props.playsinline === false) return false;
     return !isMobile.value;
-});
-
-const showFullscreenOverlay = computed(() => {
-    // iOS (Safari/Chrome) + YouTube legado: overlay porque o Vidstack não está montado neste branch.
-    return isIosTouchDevice() && isMobile.value && useLegacyYoutube.value;
 });
 
 const useNativeCrossOrigin = computed(() => providerType.value === 'native');
@@ -963,7 +1101,7 @@ function onContextMenu(e) {
 <template>
     <div
         ref="wrapperRef"
-        class="member-area-video-player aspect-video w-full bg-black relative"
+        class="member-area-video-player relative aspect-video w-full max-w-full bg-black"
         :class="[
             immersiveActive ? 'is-immersive' : '',
             !immersiveActive && theater ? 'overflow-visible rounded-xl' : !immersiveActive ? 'overflow-hidden rounded-lg' : '',
@@ -979,16 +1117,6 @@ function onContextMenu(e) {
         >
             <Minimize2 class="h-5 w-5" aria-hidden="true" />
             <span class="sr-only">Sair da tela cheia</span>
-        </button>
-        <button
-            v-if="showFullscreenOverlay && !immersiveActive"
-            type="button"
-            class="fullscreen-overlay-btn"
-            aria-label="Tela cheia"
-            @click.stop.prevent="requestMemberVideoFullscreen"
-        >
-            <Maximize2 class="h-4 w-4" aria-hidden="true" />
-            <span class="sr-only">Tela cheia</span>
         </button>
         <div
             v-if="useLegacyYoutube"
@@ -1023,25 +1151,22 @@ function onContextMenu(e) {
                 @touchstart.passive="onYoutubeOverlayInteract"
             />
 
-            <!-- Barra de progresso: largura total do vídeo -->
+            <!-- Barra de progresso estilo YouTube -->
             <div
                 class="yt-progress-overlay"
-                :class="{ hidden: !ytControlsVisible && !ytScrubbing }"
-                @pointerdown.stop="onScrubStart"
-                @pointerup.stop="onScrubEnd"
-                @pointercancel.stop="onScrubEnd"
-                @touchend.stop="onScrubEnd"
+                :class="{ 'is-scrubbing': ytScrubbing, 'is-hover': ytProgressHover }"
+                @pointerdown.stop="onProgressPointerDown"
+                @pointermove.stop="onProgressPointerMove"
+                @pointerup.stop="onProgressPointerEnd"
+                @pointercancel.stop="onProgressPointerEnd"
+                @mouseenter="ytProgressHover = true"
+                @mouseleave="ytProgressHover = false"
             >
-                <input
-                    class="yt-progress-overlay-range"
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="0.1"
-                    :value="ytProgressPct"
-                    @input="seekToPct(parseFloat($event.target.value))"
-                    aria-label="Progresso do vídeo"
-                />
+                <div ref="progressTrackRef" class="yt-progress-track">
+                    <div class="yt-progress-buffer" :style="{ width: `${ytBufferedPct}%` }" />
+                    <div class="yt-progress-played" :style="{ width: `${ytProgressPct}%` }" />
+                </div>
+                <span class="yt-progress-thumb" :style="ytThumbStyle" aria-hidden="true" />
             </div>
 
             <div class="yt-legacy-controls" :class="{ hidden: !ytControlsVisible }" @pointerdown.stop>
@@ -1055,12 +1180,47 @@ function onContextMenu(e) {
                         {{ formatTime(ytCurrentTime) }} <span class="yt-time-sep">/</span> {{ formatTime(ytDuration) }}
                     </div>
 
+                    <div
+                        class="yt-volume-wrap"
+                        :class="{ 'is-hover': ytVolumeHover, 'is-scrubbing': ytVolumeScrubbing }"
+                        @mouseenter="ytVolumeHover = true"
+                        @mouseleave="ytVolumeHover = false"
+                    >
+                        <button
+                            type="button"
+                            class="yt-icon-btn"
+                            :aria-label="ytMuted || ytVolume === 0 ? 'Ativar som' : 'Silenciar'"
+                            @click="toggleMute"
+                        >
+                            <VolumeX v-if="ytMuted || ytVolume === 0" class="h-4 w-4" aria-hidden="true" />
+                            <Volume1 v-else-if="ytVolume < 50" class="h-4 w-4" aria-hidden="true" />
+                            <Volume2 v-else class="h-4 w-4" aria-hidden="true" />
+                        </button>
+                        <div
+                            class="yt-volume-slider"
+                            role="slider"
+                            :aria-valuenow="ytVolumeFillPct"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            aria-label="Volume"
+                            @pointerdown.stop="onVolumePointerDown"
+                            @pointermove.stop="onVolumePointerMove"
+                            @pointerup.stop="onVolumePointerEnd"
+                            @pointercancel.stop="onVolumePointerEnd"
+                        >
+                            <div ref="volumeTrackRef" class="yt-volume-track">
+                                <div class="yt-volume-fill" :style="{ width: `${ytVolumeFillPct}%` }" />
+                                <span class="yt-volume-thumb" :style="ytVolumeThumbStyle" aria-hidden="true" />
+                            </div>
+                        </div>
+                    </div>
+
                     <button type="button" class="yt-icon-btn" aria-label="Tela cheia" @click="requestMemberVideoFullscreen">
                         <Maximize2 v-if="!immersiveActive" class="h-4 w-4" aria-hidden="true" />
                         <Minimize2 v-else class="h-4 w-4" aria-hidden="true" />
                     </button>
 
-                    <div class="yt-menu-wrap">
+                    <div class="yt-menu-wrap yt-quality-menu-wrap">
                         <button
                             type="button"
                             class="yt-icon-btn"
@@ -1167,21 +1327,31 @@ function onContextMenu(e) {
 
 <style scoped>
 .member-area-video-player {
-    --media-brand: #f5f5f5;
-    --media-focus-ring-color: #4e9cf6;
+    --media-brand: var(--ma-primary, #ff0000);
+    --media-focus-ring-color: color-mix(in srgb, var(--ma-primary, #ff0000) 60%, white);
+    --video-progress-color: var(--ma-primary, #ff0000);
+    max-width: 100%;
 }
 .member-area-video-player.is-immersive {
     position: fixed;
     inset: 0;
     z-index: 100;
+    width: 100%;
+    height: 100%;
+    max-width: none;
     border-radius: 0;
     aspect-ratio: unset;
     display: flex;
     flex-direction: column;
+    background: #000;
 }
 .member-area-video-player.is-immersive .yt-legacy-root {
     flex: 1;
     min-height: 0;
+    height: 100%;
+}
+.member-area-video-player.is-immersive .yt-legacy-mount {
+    height: 100%;
 }
 .member-area-video-player.is-immersive .player {
     flex: 1;
@@ -1214,31 +1384,6 @@ function onContextMenu(e) {
 }
 .player[data-view-type='video'] {
     aspect-ratio: 16 / 9;
-}
-/* iPhone Safari (YouTube): botão overlay p/ fullscreen do provider */
-.fullscreen-overlay-btn {
-    position: absolute;
-    right: 10px;
-    bottom: 10px;
-    z-index: 3;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    height: 36px;
-    width: 36px;
-    border-radius: 9999px;
-    background: rgba(0, 0, 0, 0.55);
-    color: rgba(255, 255, 255, 0.92);
-    border: 1px solid rgba(255, 255, 255, 0.22);
-    backdrop-filter: blur(6px);
-}
-.fullscreen-overlay-btn:active {
-    transform: scale(0.98);
-}
-.fullscreen-overlay-btn:focus-visible {
-    outline: 2px solid rgba(78, 156, 246, 0.9);
-    outline-offset: 2px;
 }
 /* Poster por cima do iframe do YouTube até o usuário dar play */
 .player :deep(.vds-poster),
@@ -1351,24 +1496,79 @@ function onContextMenu(e) {
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 4;
-    padding: 10px 12px;
-    transition: opacity 0.18s ease, transform 0.18s ease;
+    z-index: 5;
+    display: flex;
+    align-items: flex-end;
+    height: 16px;
+    padding: 0 6px;
+    cursor: pointer;
+    touch-action: none;
+    overflow: visible;
+    box-sizing: border-box;
 }
-.yt-progress-overlay.hidden {
-    opacity: 0;
-    transform: translateY(6px);
-    pointer-events: none;
+.member-area-video-player.is-immersive .yt-progress-overlay {
+    padding: 0;
 }
-.yt-progress-overlay-range {
+.yt-progress-track {
+    position: relative;
     width: 100%;
     height: 4px;
-    accent-color: rgba(255, 255, 255, 0.92);
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 9999px;
+    overflow: hidden;
+    transition: height 0.15s ease;
+}
+.yt-progress-overlay.is-hover .yt-progress-track,
+.yt-progress-overlay.is-scrubbing .yt-progress-track {
+    height: 6px;
+}
+.yt-progress-buffer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.35);
+    pointer-events: none;
+    transition: width 0.15s linear;
+}
+.yt-progress-played {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: var(--video-progress-color);
+    pointer-events: none;
+    transition: width 0.08s linear;
+    z-index: 1;
+}
+.yt-progress-thumb {
+    position: absolute;
+    bottom: -5px;
+    left: 0;
+    width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    background: var(--video-progress-color);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+    transform: translateX(-50%) scale(0);
+    transition: transform 0.15s ease, bottom 0.15s ease;
+    pointer-events: none;
+    z-index: 2;
+}
+.yt-progress-overlay.is-hover .yt-progress-thumb,
+.yt-progress-overlay.is-scrubbing .yt-progress-thumb {
+    bottom: -4px;
+    transform: translateX(-50%) scale(1);
+}
+.yt-progress-overlay.is-scrubbing .yt-progress-thumb {
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.35),
+        0 0 0 4px color-mix(in srgb, var(--video-progress-color) 35%, transparent);
 }
 .yt-legacy-controls {
     position: absolute;
     left: 10px;
-    bottom: 38px;
+    bottom: 42px;
     z-index: 4;
     display: flex;
     flex-direction: column;
@@ -1419,6 +1619,65 @@ function onContextMenu(e) {
 .yt-time-sep {
     opacity: 0.6;
     padding: 0 4px;
+}
+.yt-volume-wrap {
+    display: none;
+    align-items: center;
+    gap: 2px;
+}
+@media (min-width: 640px) {
+    .yt-volume-wrap {
+        display: flex;
+    }
+}
+.yt-volume-slider {
+    width: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: width 0.15s ease, opacity 0.15s ease;
+    touch-action: none;
+    cursor: pointer;
+    padding: 8px 0;
+}
+.yt-volume-wrap.is-hover .yt-volume-slider,
+.yt-volume-wrap.is-scrubbing .yt-volume-slider {
+    width: 72px;
+    opacity: 1;
+}
+.yt-volume-track {
+    position: relative;
+    width: 100%;
+    height: 4px;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.28);
+    overflow: visible;
+}
+.yt-volume-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    border-radius: 9999px;
+    background: var(--video-progress-color, var(--ma-primary, #ff0000));
+    pointer-events: none;
+    transition: width 0.08s linear;
+}
+.yt-volume-thumb {
+    position: absolute;
+    bottom: -3px;
+    left: 0;
+    width: 10px;
+    height: 10px;
+    border-radius: 9999px;
+    background: #fff;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+    transform: translateX(-50%) scale(0);
+    transition: transform 0.12s ease;
+    pointer-events: none;
+}
+.yt-volume-wrap.is-hover .yt-volume-thumb,
+.yt-volume-wrap.is-scrubbing .yt-volume-thumb {
+    transform: translateX(-50%) scale(1);
 }
 .yt-menu-wrap {
     position: relative;
@@ -1516,5 +1775,46 @@ function onContextMenu(e) {
     left: 50%;
     top: 50%;
     transform: translate(-50%, -50%);
+}
+@media (max-width: 639px) {
+    .member-area-video-player.is-immersive {
+        width: 100dvw;
+        height: 100dvh;
+    }
+    .yt-legacy-controls {
+        left: 8px;
+        right: auto;
+        max-width: calc(100% - 16px);
+        width: max-content;
+    }
+    .yt-controlbar {
+        width: max-content;
+        max-width: calc(100% - 16px);
+        flex-wrap: nowrap;
+        gap: 6px;
+        padding: 6px 8px;
+    }
+    .yt-icon-btn {
+        height: 30px;
+        width: 30px;
+    }
+    .yt-time {
+        font-size: 11px;
+    }
+    .yt-speed-btn-label {
+        display: none;
+    }
+    .yt-quality-menu-wrap {
+        display: none;
+    }
+    .yt-progress-overlay {
+        height: 22px;
+    }
+    .yt-progress-overlay.is-scrubbing .yt-progress-track {
+        height: 7px;
+    }
+    .yt-progress-overlay.is-scrubbing .yt-progress-thumb {
+        transform: translate(-50%, -50%) scale(1);
+    }
 }
 </style>

@@ -61,13 +61,13 @@ const showPdfDownloadsInContent = computed(() => {
 
 <template>
     <div
-        class="rounded-2xl bg-zinc-950/90"
+        class="min-w-0 max-w-full overflow-hidden rounded-2xl bg-zinc-950/90"
         :class="cinemaMode
             ? 'overflow-visible bg-transparent shadow-none'
-            : 'overflow-hidden shadow-2xl shadow-black/40'"
+            : 'shadow-2xl shadow-black/40'"
     >
         <template v-if="lesson.type === 'video'">
-            <div class="relative">
+            <div class="relative min-w-0 max-w-full overflow-hidden">
                 <MemberAreaVideoPlayer
                     v-if="lesson.content_url"
                     :key="`${lesson.id}-${autoplayVideo ? 'autoplay' : 'manual'}`"

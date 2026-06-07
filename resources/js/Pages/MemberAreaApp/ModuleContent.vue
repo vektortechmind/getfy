@@ -257,8 +257,23 @@ function onKeydown(e) {
     }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown));
-onUnmounted(() => window.removeEventListener('keydown', onKeydown));
+const LG_BREAKPOINT = 1024;
+
+function syncCinemaModeForViewport() {
+    if (typeof window !== 'undefined' && window.innerWidth < LG_BREAKPOINT && cinemaMode.value) {
+        setCinemaMode(false);
+    }
+}
+
+onMounted(() => {
+    window.addEventListener('keydown', onKeydown);
+    syncCinemaModeForViewport();
+    window.addEventListener('resize', syncCinemaModeForViewport);
+});
+onUnmounted(() => {
+    window.removeEventListener('keydown', onKeydown);
+    window.removeEventListener('resize', syncCinemaModeForViewport);
+});
 
 const commentSubmitting = ref(false);
 function submitComment(content) {
@@ -303,14 +318,11 @@ function scrollCarousel(sectionId, direction) {
 <template>
     <div class="space-y-8" :class="cinemaMode && current_lesson ? 'space-y-2' : ''">
         <div
-            class="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8"
-            :class="cinemaMode && current_lesson ? 'lg:flex-col' : ''"
+            class="relative"
+            :class="cinemaMode && current_lesson ? '' : ''"
         >
-            <main
-                class="relative z-0 min-w-0 flex-1"
-                :class="cinemaMode && current_lesson ? 'w-full max-w-none space-y-2' : 'space-y-5'"
-            >
-                <template v-if="current_lesson">
+            <template v-if="current_lesson && cinemaMode">
+                <main class="relative z-0 min-w-0 space-y-2">
                     <div class="transition-all duration-300 ease-out">
                         <MemberLessonContent
                             :lesson="current_lesson"
@@ -328,7 +340,6 @@ function scrollCarousel(sectionId, direction) {
                             @cancel-next="onCancelNext"
                         />
                     </div>
-
                     <MemberLessonToolbar
                         :title="current_lesson.title"
                         :slug="slug"
@@ -348,32 +359,97 @@ function scrollCarousel(sectionId, direction) {
                         @complete="markComplete"
                         @open-lessons="mobileSidebarOpen = true"
                     />
+                </main>
+            </template>
 
-                    <MemberLessonMaterials v-if="!cinemaMode" :lesson="current_lesson" />
+            <template v-else-if="current_lesson">
+                <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:gap-8">
+                    <div class="min-w-0 max-w-full space-y-5">
+                        <div class="transition-all duration-300 ease-out">
+                            <MemberLessonContent
+                                :lesson="current_lesson"
+                                :member-area-base-url="memberAreaBaseUrl"
+                                :cinema-mode="cinemaMode"
+                                :autoplay-video="shouldAutoplayVideo"
+                                :next-overlay-visible="nextOverlayVisible"
+                                :next-target="nextLessonTarget"
+                                :next-countdown="nextCountdown"
+                                :next-countdown-total="NEXT_COUNTDOWN_SECONDS"
+                                @ended="onVideoEnded"
+                                @progress="onVideoProgress"
+                                @last-page-reached="markComplete"
+                                @play-next="goToNextLesson"
+                                @cancel-next="onCancelNext"
+                            />
+                        </div>
 
-                    <MemberLessonComments
-                        v-if="!cinemaMode"
-                        :comments="lesson_comments"
-                        :comments-enabled="comments_enabled"
-                        :comments-require-approval="comments_require_approval"
-                        :submitting="commentSubmitting"
-                        @submit="submitComment"
-                    />
-                </template>
+                        <MemberLessonToolbar
+                            :title="current_lesson.title"
+                            :slug="slug"
+                            :lesson-id="current_lesson.id"
+                            :base-url="memberAreaBaseUrl"
+                            :cinema-mode="cinemaMode"
+                            :completed="completed"
+                            :completing="completing"
+                            :likes-count="current_lesson.likes_count ?? 0"
+                            :user-liked="!!current_lesson.user_liked"
+                            :user-note="current_lesson.user_note ?? ''"
+                            :navigation="lesson_navigation"
+                            :lesson-url="lessonUrl"
+                            :module-lesson-url="moduleLessonUrl"
+                            show-lessons-button
+                            @toggle-cinema="toggleCinemaMode()"
+                            @complete="markComplete"
+                            @open-lessons="mobileSidebarOpen = true"
+                        />
 
-                <template v-else>
+                        <MemberLessonMaterials :lesson="current_lesson" />
+
+                        <MemberLessonComments
+                            :comments="lesson_comments"
+                            :comments-enabled="comments_enabled"
+                            :comments-require-approval="comments_require_approval"
+                            :submitting="commentSubmitting"
+                            @submit="submitComment"
+                        />
+                    </div>
+
+                    <aside
+                        class="hidden min-h-0 lg:block lg:sticky lg:top-14 lg:h-[calc(100vh-3.5rem-1rem)] lg:max-h-[calc(100vh-3.5rem-1rem)] lg:overflow-hidden lg:self-start"
+                    >
+                        <MemberLessonSidebar
+                            class="h-full"
+                            :module="module"
+                            :lessons="lessons"
+                            :current-lesson-id="current_lesson.id"
+                            :slug="slug"
+                            :progress-percent="progress_percent"
+                            :course-progress="courseProgress"
+                            :is-lesson-completed="isLessonCompletedFn"
+                            :lesson-url="lessonUrl"
+                            :module-lesson-url="moduleLessonUrl"
+                            :next-modules="next_modules"
+                        />
+                    </aside>
+                </div>
+            </template>
+
+            <div
+                v-else
+                class="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8"
+            >
+            <main class="relative z-0 min-w-0 flex-1 space-y-5">
                     <div class="rounded-2xl bg-black/20 p-12 text-center">
                         <p class="text-zinc-400">Selecione uma aula na lista ao lado.</p>
                         <Link :href="`/m/${slug}`" class="mt-4 inline-block text-sm text-[var(--ma-primary)] hover:underline">← Voltar ao início</Link>
                     </div>
-                </template>
             </main>
 
             <aside
-                v-if="!cinemaMode"
-                class="hidden w-80 shrink-0 lg:block lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)]"
+                class="hidden min-h-0 w-80 shrink-0 lg:block lg:sticky lg:top-14 lg:h-[calc(100vh-3.5rem-1rem)] lg:max-h-[calc(100vh-3.5rem-1rem)] lg:overflow-hidden lg:self-start"
             >
                 <MemberLessonSidebar
+                    class="h-full"
                     :module="module"
                     :lessons="lessons"
                     :current-lesson-id="current_lesson?.id ?? null"
@@ -386,6 +462,7 @@ function scrollCarousel(sectionId, direction) {
                     :next-modules="next_modules"
                 />
             </aside>
+            </div>
         </div>
 
         <Teleport to="body">
@@ -395,10 +472,11 @@ function scrollCarousel(sectionId, direction) {
                 role="dialog"
                 aria-modal="true"
             >
-                <div class="absolute inset-0 bg-black/70" @click="mobileSidebarOpen = false" />
-                <div class="absolute inset-y-0 right-0 flex w-full max-w-sm flex-col p-4">
+                <div class="absolute inset-0 bg-black/90" @click="mobileSidebarOpen = false" />
+                <div class="absolute inset-y-0 right-0 flex h-full w-full max-w-sm flex-col p-4">
                     <MemberLessonSidebar
                         mobile
+                        class="min-h-0 flex-1"
                         :module="module"
                         :lessons="lessons"
                         :current-lesson-id="current_lesson?.id ?? null"
